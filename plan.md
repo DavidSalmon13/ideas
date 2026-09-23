@@ -596,7 +596,7 @@ This is the earliest point the product demonstrates its core value: a grounded, 
 ## 35. Final Implementation Checklist
 
 **Phase 0 — Foundation**
-- [ ] Repo + `pyproject` (uv/ruff/mypy/pytest) + Docker Compose
+- [x] Repo + `pyproject` (uv/ruff/mypy/pytest) + Docker Compose
 - [ ] SQLite + Alembic baseline + settings + structlog
 - [ ] CI (offline) green
 
