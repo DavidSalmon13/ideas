@@ -5,6 +5,7 @@ from logging.config import fileConfig
 from alembic import context
 
 from opp.config.settings import get_settings
+from opp.db import models as _models  # noqa: F401  (register tables on Base.metadata)
 from opp.db.base import Base
 from opp.db.session import create_db_engine
 

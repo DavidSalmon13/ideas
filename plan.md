@@ -602,7 +602,7 @@ This is the earliest point the product demonstrates its core value: a grounded, 
 
 **Phase 1 — Core domain + evidence**
 - [x] Domain models (Opportunity, Claim, Source, Lead, …)
-- [ ] DB tables + repositories + indexes
+- [x] DB tables + repositories + indexes
 - [ ] Evidence Store + validator (auto-demote, assumption-load) + dedup
 
 **Phase 2 — Research + LLM infra**

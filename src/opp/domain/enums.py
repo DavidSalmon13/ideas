@@ -109,6 +109,14 @@ class FailedGate(StrEnum):
     DUPLICATE = "duplicate"
 
 
+class DedupStatus(StrEnum):
+    """State of an entry in the cross-run dedup index (plan.md §5, §14)."""
+
+    ACTIVE = "active"
+    DISCARDED = "discarded"
+    KILLED = "killed"
+
+
 class CompetitorType(StrEnum):
     DIRECT = "direct"
     INDIRECT = "indirect"
