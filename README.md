@@ -12,7 +12,13 @@ It optimizes for the chain **Evidence → Opportunity → Validation → Economi
 
 ## Status
 
-Early design stage. The source of truth is **[`intent.md`](./intent.md)** — a detailed product/engineering intent document. No implementation code exists yet.
+Design complete; implementation not yet started. The design is captured across three documents (read in order):
+
+1. **[`intent.md`](./intent.md)** — product & engineering *intent* (the WHAT and WHY): vision, principles, agent architecture, evaluation framework, constraints. The source of truth.
+2. **[`specs.md`](./specs.md)** — the implementation-ready *product specification* (the detailed HOW-it-behaves): UX, inputs, data models, agent contracts, run lifecycle, failure handling, MVP scope, and testable acceptance criteria.
+3. **[`plan.md`](./plan.md)** — the *engineering plan* (the concrete HOW-to-build): technical architecture, technology choices, repository/DB design, build phases, vertical slices, risk registers, and the first end-to-end milestone.
+
+No implementation code exists yet.
 
 ## How it works (high level)
 
@@ -47,17 +53,19 @@ A **funnel**, not a linear pipeline — buy breadth cheaply, spend depth selecti
 | Time to first paying customer | 1–2 months target; hard-kill backstop ~4 months |
 | Cost per run | $20 hard ceiling (target $15–18) |
 
-These are **profile parameters**, not global constants — the system is designed to later hunt for "bigger ideas" by swapping the profile, with no rewrite.
+These are **profile parameters**, not global constants — the system is designed to later hunt for "bigger ideas" by swapping the profile, with no rewrite. A leaner **"Micro / Same-Month"** profile (≤ $1,000, revenue within ~1 month) also ships selectable.
 
 ## Repository layout
 
 | Path | Purpose |
 |---|---|
-| [`intent.md`](./intent.md) | Source-of-truth product & engineering intent (23 sections) |
+| [`intent.md`](./intent.md) | Product & engineering **intent** — the WHAT/WHY, source of truth (23 sections) |
+| [`specs.md`](./specs.md) | Implementation-ready **product specification** — behavior, data models, acceptance criteria (26 sections) |
+| [`plan.md`](./plan.md) | **Engineering plan** — architecture, tech choices, build phases, risks (35 sections) |
 | `README.md` | This overview |
 
 ## Next steps
 
-- Tune the default profile's budget/weight/threshold numbers after real runs.
-- Sketch the run state machine and per-agent research budgets in implementation detail.
-- Choose implementation stack (deliberately left open in `intent.md` §22).
+- Begin **Phase 0** (foundation) from [`plan.md`](./plan.md) §23 when ready to build.
+- Calibrate real per-run cost against the $20 ceiling on the first ~10 runs (top technical risk).
+- Resolve the remaining open questions in [`specs.md`](./specs.md) §26 (e.g., signal-source breadth at MVP, skills-affect-score).
