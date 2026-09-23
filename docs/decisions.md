@@ -10,3 +10,5 @@ Choices made where the docs didn't settle the question. Newest last.
 - **2026-09-23 — Settings use the `OPP_` prefix.** e.g. `OPP_DATABASE_URL`, `OPP_LOG_LEVEL`. Only settings used today exist; provider keys, budgets and model routing are added in the steps that need them.
 - **2026-09-23 — Default database is `./data/opp.db`.** The `data/` folder is git-ignored and mounted as the Docker volume, so backups are "copy that file" (plan.md §29). The container runs `alembic upgrade head` on start.
 - **2026-09-23 — Logs redact secret-looking fields.** Any log field whose name contains key/secret/token/password is written as `***` (plan.md §18, §31).
+- **2026-09-23 — "Offline" CI is enforced in the tests.** A `tests/conftest.py` fixture blocks every non-loopback network connection, so a test that forgets a fake or cassette fails instead of quietly calling a real API. Installing dependencies in CI still uses the network.
+- **2026-09-23 — CI also smoke-tests Docker Compose.** A second job runs `docker compose up --build` and waits for `/health`, covering the Phase 0 acceptance check that can't run in the dev container.
