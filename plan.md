@@ -601,7 +601,7 @@ This is the earliest point the product demonstrates its core value: a grounded, 
 - [x] CI (offline) green
 
 **Phase 1 — Core domain + evidence**
-- [ ] Domain models (Opportunity, Claim, Source, Lead, …)
+- [x] Domain models (Opportunity, Claim, Source, Lead, …)
 - [ ] DB tables + repositories + indexes
 - [ ] Evidence Store + validator (auto-demote, assumption-load) + dedup
 
