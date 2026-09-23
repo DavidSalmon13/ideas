@@ -223,7 +223,7 @@ class TraceRow(DocRow):
 class DedupIndexRow(Base):
     """Cross-run dedup entries so discarded/killed items are never resurfaced (specs.md §4.5).
 
-    Columns only: the semantic hashing lives with the Evidence Store (next step).
+    Keys are computed by `opp.evidence.dedup`; the Evidence Store reads and writes them.
     """
 
     __tablename__ = "dedup_index"

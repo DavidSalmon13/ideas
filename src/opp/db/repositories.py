@@ -5,7 +5,6 @@ domain object from the ``data`` column; writes also fill the projected index col
 Repositories never commit — the caller owns the transaction.
 """
 
-import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass
 from uuid import UUID
@@ -31,12 +30,7 @@ from opp.domain.lead import Kill, Lead
 from opp.domain.opportunity import Experiment, Opportunity
 from opp.domain.report import Report, Trace
 from opp.domain.run import AgentRun, ResearchRun, Stage
-
-
-def url_hash(url: str) -> str:
-    """Dedup key for a Source. A plain digest of the raw URL for now; the Evidence Store
-    step (next) swaps in canonicalisation (drop tracking params, normalise host/scheme)."""
-    return hashlib.sha256(url.strip().encode("utf-8")).hexdigest()
+from opp.evidence.urls import url_hash
 
 
 class ReadRepository[TDomain: BaseModel, TRow: DocRow]:
@@ -406,8 +400,7 @@ class DedupEntry:
 
 
 class DedupRepository:
-    """The dedup index table. Semantic hashing arrives with the Evidence Store step;
-    this just stores and reads entries keyed by an already-computed hash."""
+    """The dedup index table, keyed by hashes computed in `opp.evidence.dedup`."""
 
     def __init__(self, session: Session) -> None:
         self._session = session

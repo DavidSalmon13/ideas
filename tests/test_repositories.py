@@ -20,7 +20,6 @@ from opp.db.repositories import (
     SourceRepository,
     StageRepository,
     TraceRepository,
-    url_hash,
 )
 from opp.db.session import create_db_engine, create_session_factory
 from opp.domain.enums import (
@@ -51,6 +50,7 @@ from opp.domain.lead import Kill, Lead
 from opp.domain.opportunity import Competitor, Experiment, Opportunity
 from opp.domain.report import Report, Trace
 from opp.domain.run import AgentRun, ResearchRun, Stage
+from opp.evidence.urls import url_hash
 
 
 @pytest.fixture

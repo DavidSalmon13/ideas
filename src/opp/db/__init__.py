@@ -15,7 +15,6 @@ from opp.db.repositories import (
     SourceRepository,
     StageRepository,
     TraceRepository,
-    url_hash,
 )
 
 __all__ = [
@@ -33,5 +32,4 @@ __all__ = [
     "SourceRepository",
     "StageRepository",
     "TraceRepository",
-    "url_hash",
 ]
