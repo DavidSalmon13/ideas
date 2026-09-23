@@ -642,7 +642,15 @@ Per-dimension scores (1–5) with written justification; a composite used **only
 Revenue potential · Gross margin · Time-to-first-revenue · Upfront capital · Automation/solo-operability · Small-team feasibility · Customer-acquisition difficulty · Competitive intensity · Defensibility/moat · Why-now/timing · Market attractiveness · Customer pain · Willingness to pay · Scalability · **Evidence quality** · **Assumption risk**.
 
 ### 17.3 Weights
-Weights come from the active **Profile** (`intent.md` §13.2), adjustable per RunConfig. The default Bootstrap profile up-weights time-to-revenue, margin, automation, and capital; down-weights TAM and long-term defensibility.
+Weights come from the active **Profile** (`intent.md` §13.2), adjustable per RunConfig. Profiles form a selectable tier ladder:
+
+| Profile | Capital hard gate | Time-to-revenue hard gate | Emphasis |
+|---|---|---|---|
+| **Micro / Same-Month** (leanest) | > **$1,000** → kill | > **~1 month** → kill | Fastest, cheapest cashflow; market/moat de-prioritized |
+| **Bootstrap / Fast-Cashflow** (default) | > **$2,000** → kill | > **~4 months** → kill | Fast profit; light moat tolerated |
+| Balanced / Ambitious (future) | relaxed | relaxed | Larger ceiling, defensibility |
+
+The default Bootstrap profile up-weights time-to-revenue, margin, automation, and capital and down-weights TAM and long-term defensibility; **Micro / Same-Month** pushes those weights further and de-prioritizes market size, growth, and scalability almost entirely. Adding a profile is **configuration only** — no code/architecture change (a single new profile record + gate/weight values).
 
 ### 17.4 Scoring rules
 - Each dimension score must cite the claims supporting it; a dimension resting on `unknown`/low-confidence claims is capped (cannot score high on absent evidence).
@@ -807,7 +815,7 @@ The operator must be able to see how a conclusion was reached. The UI/report exp
 
 ### 23.1 MVP (must-have)
 - End-to-end funnel: Discovery → Triage → Shallow Validation → (checkpoint) → Deep Research (4 specialists) → Synthesis → Strategy → Red-Team → Judge.
-- Default Bootstrap profile + open-ended and basic constrained modes (RunConfig with capital/time gates + discovery scope).
+- **Two selectable profiles** — Micro / Same-Month (leanest: ≤$1k, ~1mo) and Bootstrap / Fast-Cashflow (default) — plus open-ended and basic constrained modes (RunConfig with capital/time gates + discovery scope). Additional profiles are config-only.
 - Structured **Claim/Source** evidence model with the no-fabrication + auto-demote rules and the validation step.
 - Anti-generic hard-gates + generic blocklist.
 - Scenario economics with load-bearing assumptions → validation backlog.

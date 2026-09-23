@@ -383,7 +383,14 @@ A **queryable knowledge graph** across all runs (full entity/relationship linkin
 
 ### 13.2 Opportunity Profiles (first-class, swappable)
 
-A **Profile** is a configuration object that **re-targets the entire funnel** — which signal sources discovery emphasizes, triage thresholds, dimension **weights**, and **hard gates**. Profiles are how the system's definition of "attractive" is expressed and how it scales to bigger ideas later.
+A **Profile** is a configuration object that **re-targets the entire funnel** — which signal sources discovery emphasizes, triage thresholds, dimension **weights**, and **hard gates**. Profiles are how the system's definition of "attractive" is expressed and how it scales to bigger ideas later. Profiles form a tier ladder, from leanest to most ambitious; the operator selects one per run (default: Bootstrap / Fast-Cashflow).
+
+**Leanest profile — "Micro / Same-Month"** (stricter than the default; for the fastest, cheapest possible cashflow):
+- **Maximize:** time-to-first-revenue above everything, near-zero upfront capital, immediate solo-operability, high automation.
+- **Heavily weight (soft):** one-person feasibility, near-zero ongoing workload, near-zero support burden.
+- **Tolerate:** very small market, minimal ceiling, essentially no moat (speed and near-zero cost are the whole thesis).
+- **De-prioritize:** market size, growth, defensibility, scalability.
+- **Hard gates:** upfront capital > **$1,000** → kill; time-to-first-revenue > **~1 month** → kill; fails any specificity hard-gate (§16) → kill.
 
 **Default profile — "Bootstrap / Fast-Cashflow":**
 - **Maximize:** time-to-first-revenue, gross margin, automation/solo-operability, near-zero upfront capital.
@@ -392,7 +399,7 @@ A **Profile** is a configuration object that **re-targets the entire funnel** �
 - **De-prioritize:** huge TAM, long-term defensibility, market-growth-rate.
 - **Hard gates:** upfront capital > $2,000 → kill; time-to-first-revenue > ~4 months → kill; fails any specificity hard-gate (§16) → kill.
 
-**Future profiles** (e.g., "Balanced," "Ambitious / Bigger-Ideas") reuse the same machinery with relaxed gates and re-weighted dimensions. **No rewrite required** — this is the "scalable to bigger ideas" requirement.
+**Future profiles** (e.g., "Balanced," "Ambitious / Bigger-Ideas") reuse the same machinery with relaxed gates and re-weighted dimensions. **No rewrite required** — this is the "scalable to bigger ideas" requirement. Adding a profile (like "Micro / Same-Month" above) is configuration only, not an architecture change.
 
 ### 13.3 Non-compensatory scoring
 The framework is **non-compensatory**: a hard-gate breach or a red-team **fatal flaw** forces a **Kill** regardless of how strong other dimensions are. The composite score is used **only to rank** the shortlist, never as the decision itself.
