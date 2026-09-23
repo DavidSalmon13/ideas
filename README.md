@@ -1,0 +1,63 @@
+# Opportunity Discovery & Evaluation System
+
+An AI-powered **decision system** that systematically **discovers, researches, evaluates, and develops (as concrete plans)** business opportunities a **solo, capital-constrained founder** can realistically build, launch, and operate.
+
+It is **not** an idea generator and **not** a builder. It exists to answer one question honestly:
+
+> **"Is this opportunity worth spending my time investigating or building?"**
+
+It optimizes for the chain **Evidence → Opportunity → Validation → Economics → Execution → Critical Evaluation**, and explicitly rejects the failure mode **Prompt → AI-generated startup idea**.
+
+---
+
+## Status
+
+Early design stage. The source of truth is **[`intent.md`](./intent.md)** — a detailed product/engineering intent document. No implementation code exists yet.
+
+## How it works (high level)
+
+A **funnel**, not a linear pipeline — buy breadth cheaply, spend depth selectively, attack before scoring:
+
+1. **Discovery** — parallel agents mine real-world *signal sources* (complaints, reviews, job posts, regulatory/tech changes, market inefficiencies) for candidate leads. Every lead must cite a real, retrievable source. LLM brainstorming is banned as a source.
+2. **Triage gate** — cheap filtering: dedup, generic-idea hard-kills, and a specificity test (named customer / cited pain / why-now).
+3. **Shallow validation gate** — roughly scores the top leads to pick **the one** worth deep research.
+4. **Checkpoint** — you approve/veto which opportunity gets the expensive deep dive.
+5. **Deep research** — four parallel specialists (customer/demand, competition, market/economics, feasibility & "why now").
+6. **Strategy** — turns research into a concrete business concept, MVP, GTM, and small-team operating model.
+7. **Red-team → Judge** — an adversarial critic attacks the plan; the judge scores it *after* seeing the attack and issues a verdict: **Pursue / Promising-but-unproven / Park / Kill**.
+
+**Output:** a **1-page decision brief** backed by a full evidence-linked dossier, plus a persisted, promotable shortlist of runners-up.
+
+## Core principles
+
+- **Evidence over intuition** — no opportunity exists until something real was *found*.
+- **Never fabricate** — "could not verify" is a valid, first-class answer; invented numbers are forbidden.
+- **Facts vs. assumptions are structural** — material claims carry type, source, and confidence.
+- **Model, don't assert** — economics are scenario-based with labeled assumptions, never asserted point figures.
+- **Cost is first-class** — a hard **$20/run** ceiling; breadth is cheap, depth is selective.
+- **Durable state, disposable context** — running out of an agent's context window never ends a run; it resumes from where it left off.
+- **Decisions, not numbers** — output maps to an action, not a score to interpret.
+
+## Key constraints (default "Bootstrap / Fast-Cashflow" profile)
+
+| Constraint | Value |
+|---|---|
+| Team size | 1 person now; up to ~3 acceptable (heavy soft factor) |
+| Upfront capital to first revenue | ≤ $2,000 (hard kill) |
+| Time to first paying customer | 1–2 months target; hard-kill backstop ~4 months |
+| Cost per run | $20 hard ceiling (target $15–18) |
+
+These are **profile parameters**, not global constants — the system is designed to later hunt for "bigger ideas" by swapping the profile, with no rewrite.
+
+## Repository layout
+
+| Path | Purpose |
+|---|---|
+| [`intent.md`](./intent.md) | Source-of-truth product & engineering intent (23 sections) |
+| `README.md` | This overview |
+
+## Next steps
+
+- Tune the default profile's budget/weight/threshold numbers after real runs.
+- Sketch the run state machine and per-agent research budgets in implementation detail.
+- Choose implementation stack (deliberately left open in `intent.md` §22).
