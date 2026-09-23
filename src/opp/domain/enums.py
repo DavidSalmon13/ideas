@@ -1,0 +1,245 @@
+"""Enumerations from the domain vocabulary (specs.md §8-§9, §17, §19; intent.md §11-§16)."""
+
+from enum import StrEnum
+
+
+class Level(StrEnum):
+    """Used for claim confidence and source credibility tier."""
+
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class ClaimType(StrEnum):
+    FACT = "fact"
+    ESTIMATE = "estimate"
+    ASSUMPTION = "assumption"
+    # "Looked, could not determine." A first-class answer (intent.md §4, specs.md §14).
+    UNKNOWN = "unknown"
+
+
+class ValueStatus(StrEnum):
+    """The verified|estimated|assumed|unknown tag used for economics values (specs.md §10, §14)."""
+
+    VERIFIED = "verified"
+    ESTIMATED = "estimated"
+    ASSUMED = "assumed"
+    UNKNOWN = "unknown"
+
+
+class EvidenceStrength(StrEnum):
+    STRONG = "strong"
+    MODERATE = "moderate"
+    WEAK = "weak"
+
+
+class Stance(StrEnum):
+    SUPPORTING = "supporting"
+    OPPOSING = "opposing"
+    NEUTRAL = "neutral"
+
+
+class SourceType(StrEnum):
+    REGULATORY = "regulatory"
+    INDUSTRY_REPORT = "industry_report"
+    TRADE_PRESS = "trade_press"
+    REVIEW = "review"
+    FORUM = "forum"
+    VENDOR = "vendor"
+    PRICING_PAGE = "pricing_page"
+    JOB_POST = "job_post"
+    OTHER = "other"
+
+
+class BusinessShape(StrEnum):
+    SAAS = "saas"
+    SERVICE = "service"
+    MARKETPLACE = "marketplace"
+    DATA = "data"
+    LICENSING = "licensing"
+    INFOPRODUCT = "infoproduct"
+    ECOMMERCE = "ecommerce"
+    PHYSICAL = "physical"
+    ROLLUP = "rollup"
+    ARBITRAGE = "arbitrage"
+    INFRA = "infra"
+    OTHER = "other"
+
+
+class SignalSource(StrEnum):
+    """Discovery strategies (specs.md §4.2)."""
+
+    UNMET_NEED = "unmet_need"
+    INCUMBENT_WEAKNESS = "incumbent_weakness"
+    REGULATORY_TECH_CHANGE = "regulatory_tech_change"
+    MANUAL_PROCESS = "manual_process"
+    MARKET_INEFFICIENCY = "market_inefficiency"
+
+
+class LeadStatus(StrEnum):
+    NEW = "new"
+    KEPT = "kept"
+    KILLED = "killed"
+    DUPLICATE = "duplicate"
+
+
+class OpportunityStatus(StrEnum):
+    NEW = "new"
+    PROMOTED = "promoted"
+    PURSUED = "pursued"
+    PARKED = "parked"
+    DISCARDED = "discarded"
+
+
+class KillSubject(StrEnum):
+    LEAD = "lead"
+    OPPORTUNITY = "opportunity"
+
+
+class FailedGate(StrEnum):
+    """Why something was killed: specificity tests, profile hard gates, red-team, dedup."""
+
+    NAMED_CUSTOMER = "named_customer"
+    SPECIFIC_PAIN = "specific_pain"
+    WHY_NOW = "why_now"
+    CAPITAL = "capital"
+    TIME_TO_REVENUE = "time_to_revenue"
+    FATAL_FLAW = "fatal_flaw"
+    DUPLICATE = "duplicate"
+
+
+class CompetitorType(StrEnum):
+    DIRECT = "direct"
+    INDIRECT = "indirect"
+    SUBSTITUTE = "substitute"
+
+
+class ExperimentMethod(StrEnum):
+    INTERVIEW = "interview"
+    LANDING_PAGE = "landing_page"
+    PRESALE = "presale"
+    OUTREACH = "outreach"
+    MVP = "mvp"
+    DESK_RESEARCH = "desk_research"
+
+
+class Severity(StrEnum):
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class Dimension(StrEnum):
+    """Evaluation dimensions, each scored 1-5 (specs.md §17.2)."""
+
+    REVENUE_POTENTIAL = "revenue_potential"
+    GROSS_MARGIN = "gross_margin"
+    TIME_TO_FIRST_REVENUE = "time_to_first_revenue"
+    UPFRONT_CAPITAL = "upfront_capital"
+    AUTOMATION = "automation"
+    SMALL_TEAM_FEASIBILITY = "small_team_feasibility"
+    ACQUISITION_DIFFICULTY = "acquisition_difficulty"
+    COMPETITIVE_INTENSITY = "competitive_intensity"
+    DEFENSIBILITY = "defensibility"
+    WHY_NOW = "why_now"
+    MARKET_ATTRACTIVENESS = "market_attractiveness"
+    CUSTOMER_PAIN = "customer_pain"
+    WILLINGNESS_TO_PAY = "willingness_to_pay"
+    SCALABILITY = "scalability"
+    EVIDENCE_QUALITY = "evidence_quality"
+    ASSUMPTION_RISK = "assumption_risk"
+
+
+class Verdict(StrEnum):
+    PURSUE = "pursue"
+    PROMISING_BUT_UNPROVEN = "promising_but_unproven"
+    PARK = "park"
+    KILL = "kill"
+
+
+class Override(StrEnum):
+    """Non-compensatory overrides; any of them forces a Kill (specs.md §17.4)."""
+
+    CAPITAL_GATE = "capital_gate"
+    TIME_TO_REVENUE_GATE = "time_to_revenue_gate"
+    SPECIFICITY_GATE = "specificity_gate"
+    FATAL_FLAW = "fatal_flaw"
+
+
+class RunMode(StrEnum):
+    OPEN_ENDED = "open_ended"
+    CONSTRAINED = "constrained"
+
+
+class CheckpointMode(StrEnum):
+    MANDATORY = "mandatory"
+    AUTONOMOUS = "autonomous"
+
+
+class RunStatus(StrEnum):
+    """Run state machine (specs.md §19.1)."""
+
+    CREATED = "created"
+    DISCOVERING = "discovering"
+    SCREENING = "screening"
+    SHALLOW_VALIDATION = "shallow_validation"
+    AWAITING_CHECKPOINT = "awaiting_checkpoint"
+    DEEP_RESEARCH = "deep_research"
+    SYNTHESIZING = "synthesizing"
+    BUILDING_PLAN = "building_plan"
+    RED_TEAM = "red_team"
+    EVALUATING = "evaluating"
+    COMPLETED = "completed"
+    COMPLETED_PARTIAL = "completed_partial"
+    CANCELLED = "cancelled"
+    HALTED_BUDGET = "halted_budget"
+    HALTED_ERROR = "halted_error"
+
+
+TERMINAL_RUN_STATUSES = frozenset(
+    {RunStatus.COMPLETED, RunStatus.COMPLETED_PARTIAL, RunStatus.CANCELLED}
+)
+"""Halted runs are not terminal: they can be resumed (specs.md §19.4)."""
+
+
+class StageName(StrEnum):
+    DISCOVERY = "discovery"
+    SCREENING = "screening"
+    SHALLOW_VALIDATION = "shallow_validation"
+    CHECKPOINT = "checkpoint"
+    DEEP_RESEARCH = "deep_research"
+    SYNTHESIS = "synthesis"
+    STRATEGY = "strategy"
+    RED_TEAM = "red_team"
+    EVALUATION = "evaluation"
+
+
+class StageStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class AgentRunStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    DEGRADED = "degraded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class ModelTier(StrEnum):
+    CHEAP = "cheap"
+    MEDIUM = "medium"
+    PREMIUM = "premium"
+
+
+class TraceKind(StrEnum):
+    LLM = "llm"
+    SEARCH = "search"
+    FETCH = "fetch"
