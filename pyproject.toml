@@ -5,7 +5,11 @@ description = "Opportunity Discovery & Evaluation System"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "alembic>=1.13",
     "fastapi>=0.115",
+    "pydantic-settings>=2.4",
+    "sqlalchemy>=2.0",
+    "structlog>=24.4",
     "uvicorn[standard]>=0.30",
 ]
 

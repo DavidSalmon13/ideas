@@ -597,7 +597,7 @@ This is the earliest point the product demonstrates its core value: a grounded, 
 
 **Phase 0 — Foundation**
 - [x] Repo + `pyproject` (uv/ruff/mypy/pytest) + Docker Compose
-- [ ] SQLite + Alembic baseline + settings + structlog
+- [x] SQLite + Alembic baseline + settings + structlog
 - [ ] CI (offline) green
 
 **Phase 1 — Core domain + evidence**
