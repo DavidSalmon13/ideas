@@ -108,9 +108,7 @@ class OpportunityRow(DocRow):
     __tablename__ = "opportunities"
 
     run_id: Mapped[UUID] = mapped_column(fk("runs.id", ondelete="CASCADE"), index=True)
-    lead_id: Mapped[UUID | None] = mapped_column(
-        fk("leads.id", ondelete="SET NULL"), nullable=True
-    )
+    lead_id: Mapped[UUID | None] = mapped_column(fk("leads.id", ondelete="SET NULL"), nullable=True)
     status: Mapped[str] = mapped_column(String, index=True)
     business_shape: Mapped[str] = mapped_column(String)
     composite: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -137,9 +135,7 @@ class ClaimRow(DocRow):
     opportunity_id: Mapped[UUID | None] = mapped_column(
         fk("opportunities.id", ondelete="CASCADE"), nullable=True, index=True
     )
-    lead_id: Mapped[UUID | None] = mapped_column(
-        fk("leads.id", ondelete="CASCADE"), nullable=True
-    )
+    lead_id: Mapped[UUID | None] = mapped_column(fk("leads.id", ondelete="CASCADE"), nullable=True)
     type: Mapped[str] = mapped_column(String, index=True)
     confidence: Mapped[str] = mapped_column(String)
     value: Mapped[float | None] = mapped_column(Float, nullable=True)

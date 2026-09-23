@@ -141,9 +141,7 @@ class AgentRunRepository(DocRepository[AgentRun, models.AgentRunRow]):
         )
 
     def list_for_stage(self, stage_id: UUID) -> list[AgentRun]:
-        return self._all(
-            select(models.AgentRunRow).where(models.AgentRunRow.stage_id == stage_id)
-        )
+        return self._all(select(models.AgentRunRow).where(models.AgentRunRow.stage_id == stage_id))
 
 
 class LeadRepository(DocRepository[Lead, models.LeadRow]):

@@ -208,8 +208,12 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("data", sa.JSON(), nullable=False),
         _fk(["run_id"], ["runs.id"], "fk_reports_run_id_runs"),
-        _fk(["opportunity_id"], ["opportunities.id"], "fk_reports_opportunity_id_opportunities",
-            ondelete="SET NULL"),
+        _fk(
+            ["opportunity_id"],
+            ["opportunities.id"],
+            "fk_reports_opportunity_id_opportunities",
+            ondelete="SET NULL",
+        ),
         sa.PrimaryKeyConstraint("id", name="pk_reports"),
     )
     op.create_index("ix_reports_run_id", "reports", ["run_id"])
