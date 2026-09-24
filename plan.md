@@ -603,10 +603,10 @@ This is the earliest point the product demonstrates its core value: a grounded, 
 **Phase 1 — Core domain + evidence**
 - [x] Domain models (Opportunity, Claim, Source, Lead, …)
 - [x] DB tables + repositories + indexes
-- [ ] Evidence Store + validator (auto-demote, assumption-load) + dedup
+- [x] Evidence Store + validator (auto-demote, assumption-load) + dedup
 
 **Phase 2 — Research + LLM infra**
-- [ ] `SearchProvider` abstraction + default adapter
+- [x] `SearchProvider` abstraction + default adapter
 - [ ] SSRF-guarded `Fetcher` + extractor + source normalization + cache
 - [ ] `LLMGateway` (tiers, structured outputs, metering) + fallback
 - [ ] Cassette record/replay

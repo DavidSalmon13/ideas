@@ -5,13 +5,12 @@ domain object from the ``data`` column; writes also fill the projected index col
 Repositories never commit — the caller owns the transaction.
 """
 
-import hashlib
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from uuid import UUID
 
 from pydantic import BaseModel
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, delete, func, select
 from sqlalchemy.orm import Session
 
 from opp.db import models
@@ -31,12 +30,7 @@ from opp.domain.lead import Kill, Lead
 from opp.domain.opportunity import Experiment, Opportunity
 from opp.domain.report import Report, Trace
 from opp.domain.run import AgentRun, ResearchRun, Stage
-
-
-def url_hash(url: str) -> str:
-    """Dedup key for a Source. A plain digest of the raw URL for now; the Evidence Store
-    step (next) swaps in canonicalisation (drop tracking params, normalise host/scheme)."""
-    return hashlib.sha256(url.strip().encode("utf-8")).hexdigest()
+from opp.evidence.dedup import url_hash as url_hash  # re-exported for existing callers
 
 
 class ReadRepository[TDomain: BaseModel, TRow: DocRow]:
@@ -51,6 +45,13 @@ class ReadRepository[TDomain: BaseModel, TRow: DocRow]:
     def get(self, id_: UUID) -> TDomain | None:
         row = self._session.get(self._row_type, id_)
         return self._domain_type.model_validate(row.data) if row is not None else None
+
+    def get_many(self, ids: Iterable[UUID]) -> dict[UUID, TDomain]:
+        wanted = set(ids)
+        if not wanted:
+            return {}
+        rows = self._session.scalars(select(self._row_type).where(self._row_type.id.in_(wanted)))
+        return {row.id: self._domain_type.model_validate(row.data) for row in rows}
 
     def _all(self, stmt: Select[tuple[TRow]]) -> list[TDomain]:
         return [self._domain_type.model_validate(row.data) for row in self._session.scalars(stmt)]
@@ -246,26 +247,68 @@ class ClaimRepository(ReadRepository[Claim, models.ClaimRow]):
         opportunity_id: UUID | None = None,
         lead_id: UUID | None = None,
     ) -> Claim:
-        self._session.add(
-            models.ClaimRow(
-                id=claim.id,
-                opportunity_id=opportunity_id,
-                lead_id=lead_id,
-                type=claim.type.value,
-                confidence=claim.confidence.value,
-                value=claim.value,
-                unit=claim.unit,
-                agent=claim.agent,
-                stage=claim.stage,
-                observed_at=claim.observed_at,
-                data=claim.model_dump(mode="json"),
-            )
+        row = models.ClaimRow(id=claim.id, opportunity_id=opportunity_id, lead_id=lead_id)
+        self._fill(row, claim)
+        self._session.add(row)
+        self._add_links(claim)
+        return claim
+
+    def upsert(
+        self,
+        claim: Claim,
+        *,
+        opportunity_id: UUID | None = None,
+        lead_id: UUID | None = None,
+    ) -> Claim:
+        """Insert or update a claim. A claim can belong to both a lead and the opportunity
+        built from it, so an owner id that isn't passed is left as it was."""
+        row = self._session.get(models.ClaimRow, claim.id)
+        if row is None:
+            return self.add(claim, opportunity_id=opportunity_id, lead_id=lead_id)
+        if opportunity_id is not None:
+            row.opportunity_id = opportunity_id
+        if lead_id is not None:
+            row.lead_id = lead_id
+        self._fill(row, claim)
+        self._session.execute(
+            delete(models.ClaimSourceRow).where(models.ClaimSourceRow.claim_id == claim.id)
         )
-        for source_id in claim.source_ids:
+        self._add_links(claim)
+        return claim
+
+    def prune_opportunity(self, opportunity_id: UUID, keep: Iterable[UUID]) -> None:
+        """Detach claims the opportunity no longer holds; delete those nothing else owns."""
+        kept = set(keep)
+        rows = self._session.scalars(
+            select(models.ClaimRow).where(models.ClaimRow.opportunity_id == opportunity_id)
+        )
+        for row in list(rows):
+            if row.id in kept:
+                continue
+            if row.lead_id is not None:
+                row.opportunity_id = None
+            else:
+                self._session.execute(
+                    delete(models.ClaimSourceRow).where(models.ClaimSourceRow.claim_id == row.id)
+                )
+                self._session.delete(row)
+
+    @staticmethod
+    def _fill(row: models.ClaimRow, claim: Claim) -> None:
+        row.type = claim.type.value
+        row.confidence = claim.confidence.value
+        row.value = claim.value
+        row.unit = claim.unit
+        row.agent = claim.agent
+        row.stage = claim.stage
+        row.observed_at = claim.observed_at
+        row.data = claim.model_dump(mode="json")
+
+    def _add_links(self, claim: Claim) -> None:
+        for source_id in dict.fromkeys(claim.source_ids):
             self._session.add(
                 models.ClaimSourceRow(id=new_id(), claim_id=claim.id, source_id=source_id)
             )
-        return claim
 
     def list_for_opportunity(self, opportunity_id: UUID) -> list[Claim]:
         return self._all(
@@ -406,8 +449,8 @@ class DedupEntry:
 
 
 class DedupRepository:
-    """The dedup index table. Semantic hashing arrives with the Evidence Store step;
-    this just stores and reads entries keyed by an already-computed hash."""
+    """The dedup index table, keyed by an already-computed hash. The hashes come from
+    ``opp.evidence.dedup``; the Evidence Store decides what gets indexed."""
 
     def __init__(self, session: Session) -> None:
         self._session = session
