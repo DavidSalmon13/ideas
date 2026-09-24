@@ -128,6 +128,9 @@ class Orchestrator:
                 case StageOutcome.FAILED:
                     self._close_stage(stage.id, StageStatus.FAILED)
                     return self._move(run, RunStatus.HALTED_ERROR, result.reason, spent=spent)
+                case StageOutcome.NOTHING_LEFT:
+                    self._close_stage(stage.id, StageStatus.COMPLETED)
+                    return self._move(run, RunStatus.COMPLETED_PARTIAL, result.reason, spent=spent)
                 case StageOutcome.CANCELLED:
                     return self._move(
                         run, RunStatus.CANCELLED, "cancelled by the operator", spent=spent

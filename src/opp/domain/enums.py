@@ -79,7 +79,8 @@ class SignalSource(StrEnum):
 
 class LeadStatus(StrEnum):
     NEW = "new"
-    KEPT = "kept"
+    KEPT = "kept"  # survived triage
+    SHORTLISTED = "shortlisted"  # scored by shallow validation (specs.md §18.3)
     KILLED = "killed"
     DUPLICATE = "duplicate"
 
@@ -103,6 +104,9 @@ class FailedGate(StrEnum):
     NAMED_CUSTOMER = "named_customer"
     SPECIFIC_PAIN = "specific_pain"
     WHY_NOW = "why_now"
+    # A blocklisted generic pattern ("AI chatbot for X") without the stronger evidence
+    # it needs (intent.md §16).
+    GENERIC_PATTERN = "generic_pattern"
     CAPITAL = "capital"
     TIME_TO_REVENUE = "time_to_revenue"
     FATAL_FLAW = "fatal_flaw"
@@ -158,6 +162,14 @@ class Dimension(StrEnum):
     SCALABILITY = "scalability"
     EVIDENCE_QUALITY = "evidence_quality"
     ASSUMPTION_RISK = "assumption_risk"
+
+
+class EvidenceSufficiency(StrEnum):
+    """How well a provisional dimension score is backed (specs.md §5.3)."""
+
+    SUFFICIENT = "sufficient"
+    PARTIAL = "partial"
+    INSUFFICIENT = "insufficient"
 
 
 class Verdict(StrEnum):

@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from opp.agents.discovery import DiscoveryAgent
 from opp.cli import main as cli
-from opp.cli.discover import build_orchestrator
+from opp.cli.pipeline import build_orchestrator
 from opp.config.settings import get_settings
 from opp.db.base import Base
 from opp.db.repositories import (
@@ -24,13 +24,13 @@ from opp.domain.enums import AgentRunStatus, RunStatus, SignalSource, StageName,
 from opp.domain.run import AgentRun, DiscoveryScope, LeadTargets, ResearchRun, RunConfig
 from opp.orchestration.engine import Orchestrator, RunNotFoundError, RunStateError
 from opp.research.search import Freshness, SearchResponse
-from tests.agents.fakes import DiscoveryLLM, SnippetSearch
+from tests.agents.fakes import FunnelLLM, PageStub, SnippetSearch
 from tests.test_cli import services
 
 SIGNAL = SignalSource.UNMET_NEED
 CONFIG = RunConfig(
     discovery_scope=DiscoveryScope(industry="HVAC", signal_sources=[SIGNAL]),
-    lead_targets=LeadTargets(discovery_n=4),
+    lead_targets=LeadTargets(discovery_n=8),
 )
 TIGHT = CONFIG.model_copy(update={"budget_ceiling_usd": 0.02})
 
@@ -61,12 +61,14 @@ class DyingSearch(SnippetSearch):
 def orchestrator(
     sessions: sessionmaker[Session], search: SnippetSearch | None = None
 ) -> Orchestrator:
-    return build_orchestrator(services(sessions, DiscoveryLLM(), search or SnippetSearch()))
+    return build_orchestrator(services(sessions, FunnelLLM(), search or SnippetSearch()))
 
 
 def agent_run(sessions: sessionmaker[Session], run_id: UUID) -> AgentRun:
+    """The discovery agent run."""
     with sessions() as session:
-        [stage] = StageRepository(session).list_for_run(run_id)
+        stages = StageRepository(session).list_for_run(run_id)
+        [stage] = [s for s in stages if s.name is StageName.DISCOVERY]
         [found] = AgentRunRepository(session).list_for_stage(stage.id)
     return found
 
@@ -98,26 +100,33 @@ def test_killed_run_resumes_from_the_ledger(sessions: sessionmaker[Session]) -> 
     interrupted = agent_run(sessions, run_id)
     assert interrupted.status is AgentRunStatus.RUNNING
     assert interrupted.work_ledger.done == ["query-0", "query-1"]
-    assert sourced_leads(sessions, run_id) == 2
+    assert sourced_leads(sessions, run_id) == 4  # 2 per query: the real lead + the decoy
     before = orch.get_run(run_id)
     assert before.status is RunStatus.DISCOVERING
 
     search = SnippetSearch()
     run = asyncio.run(orchestrator(sessions, search).resume(run_id))
 
-    queries = DiscoveryAgent(SIGNAL, target_leads=4).queries(CONFIG)
-    assert search.calls == queries[2:4]  # nothing done twice; stops once the target is met
+    queries = DiscoveryAgent(SIGNAL, target_leads=8).queries(CONFIG)
+    # Discovery repeats nothing and stops at its target; then shallow validation searches.
+    assert search.calls[:2] == queries[2:4]
+    assert all(call not in queries for call in search.calls[2:])
     assert run.status is RunStatus.COMPLETED_PARTIAL
-    assert sourced_leads(sessions, run_id) == 4
+    assert sourced_leads(sessions, run_id) == 8
     finished = agent_run(sessions, run_id)
     assert finished.status is AgentRunStatus.COMPLETED
     assert finished.work_ledger.pending == []
-    assert finished.output_counts["leads"] == 4
+    assert finished.output_counts["leads"] == 8
     assert run.cost_to_date_usd > before.cost_to_date_usd
     with sessions() as session:
-        [stage] = StageRepository(session).list_for_run(run_id)
-    assert stage.status is StageStatus.COMPLETED and stage.attempt == 1
-    assert stage.cost_usd == pytest.approx(run.cost_to_date_usd)
+        stages = {s.name: s for s in StageRepository(session).list_for_run(run_id)}
+    assert set(stages) == {
+        StageName.DISCOVERY,
+        StageName.SCREENING,
+        StageName.SHALLOW_VALIDATION,
+    }
+    assert all(s.status is StageStatus.COMPLETED and s.attempt == 1 for s in stages.values())
+    assert sum(s.cost_usd for s in stages.values()) == pytest.approx(run.cost_to_date_usd)
 
 
 def test_recovery_scan_continues_a_killed_run(sessions: sessionmaker[Session]) -> None:
@@ -132,7 +141,7 @@ def test_recovery_scan_continues_a_killed_run(sessions: sessionmaker[Session]) -
     assert [r.id for r in report.resumed] == [run_id]
     assert report.resumed[0].status is RunStatus.COMPLETED_PARTIAL
     assert [r.id for r in report.waiting] == [halted.id]  # budget halts wait for a top-up
-    assert sourced_leads(sessions, run_id) == 4
+    assert sourced_leads(sessions, run_id) == 8
 
 
 def test_budget_halt_resumes_after_a_top_up(sessions: sessionmaker[Session]) -> None:
@@ -147,7 +156,7 @@ def test_budget_halt_resumes_after_a_top_up(sessions: sessionmaker[Session]) -> 
     topped = asyncio.run(orchestrator(sessions).resume(halted.id, budget_ceiling_usd=20.0))
     assert topped.status is RunStatus.COMPLETED_PARTIAL
     assert topped.budget_ceiling_usd == 20.0
-    assert sourced_leads(sessions, halted.id) == 4
+    assert sourced_leads(sessions, halted.id) == 8
 
 
 def test_only_unfinished_runs_resume(sessions: sessionmaker[Session]) -> None:
@@ -164,7 +173,7 @@ def test_cli_resume_recover_and_cancel(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr(cli, "_providers", lambda *_: (DiscoveryLLM(), SnippetSearch()))
+    monkeypatch.setattr(cli, "_providers", lambda *_: (FunnelLLM(), SnippetSearch(), PageStub()))
     halted = halted_run(sessions)
 
     assert cli.main(["recover"]) == 0
@@ -175,7 +184,7 @@ def test_cli_resume_recover_and_cancel(
     assert cli.main(["resume", str(halted.id), "--budget", "20"]) == 0
     captured = capsys.readouterr()
     assert f"Resuming run {halted.id}" in captured.err
-    assert "4 lead(s)" in captured.out
+    assert "8 lead(s)" in captured.out
     assert "of $20.00" in captured.out
 
     assert cli.main(["resume", str(halted.id)]) == 1

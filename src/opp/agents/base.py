@@ -17,9 +17,9 @@ from pydantic import BaseModel
 
 from opp.agents.budget import AgentBudget, CallKind
 from opp.agents.memory import AgentMemory, fold
-from opp.domain.enums import AgentRunStatus, ModelTier, StageName
+from opp.domain.enums import AgentRunStatus, DedupStatus, ModelTier, StageName
 from opp.domain.evidence import Claim, Source
-from opp.domain.lead import Lead
+from opp.domain.lead import Kill, Lead
 from opp.domain.run import RunConfig
 from opp.llm.gateway import CallContext, LLMError, LLMGateway, LLMResult
 from opp.llm.pricing import CHARS_PER_TOKEN
@@ -54,9 +54,15 @@ class SubTaskResult:
 
     sources: list[Source] = field(default_factory=list)
     claims: list[Claim] = field(default_factory=list)
+    # New leads, or updated ones (triage decisions, scores): stored by id either way.
     leads: list[Lead] = field(default_factory=list)
-    # Loose claims are filed under this opportunity when set.
+    # Loose claims are filed under this opportunity or lead when set.
     opportunity_id: UUID | None = None
+    lead_id: UUID | None = None
+    # Kill records to log (specs.md §9: every kill has a reason).
+    kills: list[Kill] = field(default_factory=list)
+    # Leads to record in the cross-run dedup index once stored, with their fate.
+    index: dict[UUID, DedupStatus] = field(default_factory=dict)
     note: str = ""
     follow_up_tasks: list[str] = field(default_factory=list)
 

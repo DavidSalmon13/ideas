@@ -37,7 +37,12 @@ from opp.agents.base import (
 )
 from opp.agents.budget import AgentBudget, BudgetExceededError, ResearchBudget, RunBudget
 from opp.agents.memory import AgentMemory
-from opp.db.repositories import AgentRunRepository, RunRepository, StageRepository
+from opp.db.repositories import (
+    AgentRunRepository,
+    KillRepository,
+    RunRepository,
+    StageRepository,
+)
 from opp.domain.base import utcnow
 from opp.domain.enums import AgentRunStatus, StageName
 from opp.domain.evidence import Claim
@@ -236,9 +241,10 @@ class AgentRuntime:
             ids = {source.id: store.add_source(source).id for source in output.sources}
             counts = agent_run.output_counts
             saved_leads = 0
+            stored: dict[UUID, Lead] = {}
             for lead in output.leads:
                 try:
-                    _, report = store.save_lead(_remap_lead(lead, ids))
+                    stored[lead.id], report = store.save_lead(_remap_lead(lead, ids))
                 except UnsourcedLeadError as exc:
                     # No lead without a source: drop it, whatever the agent thought.
                     log.warning(
@@ -254,9 +260,17 @@ class AgentRuntime:
                 claims, report = store.save_claims(
                     [_remap(claim, ids) for claim in output.claims],
                     opportunity_id=output.opportunity_id,
+                    lead_id=output.lead_id,
                 )
                 tally.claims += len(claims)
                 tally.demoted += len(report.claim_ids(IssueKind.DEMOTED_UNSOURCED))
+            kills = KillRepository(session)
+            for kill in output.kills:
+                if not any(k.stage == kill.stage for k in kills.list_for_subject(kill.subject_id)):
+                    kills.add(kill)  # idempotent per stage, for a re-run sub-task
+            for lead_id, status in output.index.items():
+                if lead_id in stored:
+                    store.index_lead(stored[lead_id], status)
             for key, amount in (
                 ("leads", saved_leads),
                 ("leads_rejected", len(output.leads) - saved_leads),

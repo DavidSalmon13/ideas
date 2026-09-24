@@ -28,8 +28,18 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from opp.agents.budget import ResearchBudget
 from opp.cassettes.cassette import Cassette, CassetteMode
-from opp.cassettes.providers import CassetteLLMProvider, CassetteSearchProvider
-from opp.cli.discover import DiscoveryServices, build_orchestrator, format_agents, format_leads
+from opp.cassettes.providers import (
+    CassetteFetcher,
+    CassetteLLMProvider,
+    CassetteSearchProvider,
+)
+from opp.cli.pipeline import (
+    PipelineServices,
+    StageBudgets,
+    build_orchestrator,
+    format_agents,
+    format_leads,
+)
 from opp.config.settings import Settings, get_settings
 from opp.db.session import create_db_engine, create_session_factory
 from opp.domain.enums import RunStatus, SignalSource
@@ -39,8 +49,9 @@ from opp.llm.types import LLMProvider
 from opp.observability.logging import configure_logging
 from opp.observability.traces import DbTraceSink
 from opp.orchestration.engine import Orchestrator, RunNotFoundError, RunStateError
-from opp.research.cache import CachedSearchProvider
-from opp.research.factory import SearchConfigError, build_search_provider
+from opp.research.cache import CachedFetcher, CachedSearchProvider
+from opp.research.factory import SearchConfigError, build_fetcher, build_search_provider
+from opp.research.fetcher import PageFetcher
 from opp.research.search import SearchProvider
 
 
@@ -49,7 +60,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-v", "--verbose", action="store_true", help="show log output")
     commands = parser.add_subparsers(dest="command", required=True)
 
-    discover = commands.add_parser("discover", help="run discovery and list the leads")
+    discover = commands.add_parser(
+        "discover", help="start a run: discovery, triage and shallow validation"
+    )
     discover.add_argument(
         "--signal",
         action="append",
@@ -163,21 +176,40 @@ def _run_config(args: argparse.Namespace) -> RunConfig:
 
 def _services(
     settings: Settings, sessions: sessionmaker[Session], cassette: Cassette | None
-) -> DiscoveryServices:
-    llm, search = _providers(settings, sessions, cassette)
+) -> PipelineServices:
+    llm, search, fetcher = _providers(settings, sessions, cassette)
     sink = DbTraceSink(sessions)
-    return DiscoveryServices(
+    return PipelineServices(
         sessions=sessions,
         gateway=build_gateway(settings, sink, provider=llm),
         search=search,
+        fetcher=fetcher,
         sink=sink,
-        budget=ResearchBudget(
+        budgets=stage_budgets(settings),
+        search_cost_estimate_usd=settings.search_cost_per_call_usd,
+    )
+
+
+def stage_budgets(settings: Settings) -> StageBudgets:
+    return StageBudgets(
+        discovery=ResearchBudget(
             max_cost_usd=settings.discovery_max_cost_usd,
             max_searches=settings.discovery_max_searches,
             max_llm_calls=settings.discovery_max_llm_calls,
             max_fetches=0,
         ),
-        search_cost_estimate_usd=settings.search_cost_per_call_usd,
+        triage=ResearchBudget(
+            max_cost_usd=settings.triage_max_cost_usd,
+            max_llm_calls=settings.triage_max_llm_calls,
+            max_searches=0,
+            max_fetches=0,
+        ),
+        shallow_validation=ResearchBudget(
+            max_cost_usd=settings.shallow_max_cost_usd,
+            max_llm_calls=settings.shallow_max_llm_calls,
+            max_searches=settings.shallow_max_searches,
+            max_fetches=settings.shallow_max_fetches,
+        ),
     )
 
 
@@ -207,16 +239,29 @@ def _cancel_note(run: ResearchRun) -> str:
 
 def _providers(
     settings: Settings, sessions: sessionmaker[Session], cassette: Cassette | None
-) -> tuple[LLMProvider, SearchProvider]:
+) -> tuple[LLMProvider, SearchProvider, PageFetcher]:
     if cassette is not None and cassette.mode is CassetteMode.REPLAY:
-        return CassetteLLMProvider(cassette), CassetteSearchProvider(cassette)
+        return (
+            CassetteLLMProvider(cassette),
+            CassetteSearchProvider(cassette),
+            CassetteFetcher(cassette),
+        )
     search = build_search_provider(settings)
     llm = build_provider(settings)
+    fetcher = build_fetcher(settings)
     if cassette is not None:
         # Recording: no cache in between, or cached answers would never be recorded.
-        return CassetteLLMProvider(cassette, llm), CassetteSearchProvider(cassette, search)
-    return llm, CachedSearchProvider(
-        search, sessions, ttl=timedelta(hours=settings.search_cache_ttl_hours)
+        return (
+            CassetteLLMProvider(cassette, llm),
+            CassetteSearchProvider(cassette, search),
+            CassetteFetcher(cassette, fetcher),
+        )
+    return (
+        llm,
+        CachedSearchProvider(
+            search, sessions, ttl=timedelta(hours=settings.search_cache_ttl_hours)
+        ),
+        CachedFetcher(fetcher, sessions, ttl=timedelta(hours=settings.page_cache_ttl_hours)),
     )
 
 

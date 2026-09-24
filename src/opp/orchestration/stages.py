@@ -10,15 +10,22 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
+from uuid import UUID
 
 from sqlalchemy.orm import Session, sessionmaker
 
+from opp.agents.base import AgentResult
 from opp.agents.budget import ResearchBudget, RunBudget
 from opp.agents.discovery import DiscoveryAgent
 from opp.agents.runtime import AgentRuntime
-from opp.db.repositories import AgentRunRepository
-from opp.domain.enums import AgentRunStatus, ModelTier, SignalSource
+from opp.agents.shallow_validation import ShallowValidationAgent
+from opp.agents.triage import PriorMatch, TriageAgent
+from opp.config.profiles import get_profile
+from opp.db.repositories import AgentRunRepository, LeadRepository
+from opp.domain.enums import AgentRunStatus, LeadStatus, ModelTier, SignalSource
+from opp.domain.lead import Lead
 from opp.domain.run import AgentRun, ResearchRun, Stage
+from opp.evidence.store import EvidenceStore
 
 
 class StageOutcome(StrEnum):
@@ -27,6 +34,7 @@ class StageOutcome(StrEnum):
     HALTED_BUDGET = "halted_budget"  # stop and wait for a top-up
     FAILED = "failed"  # nothing usable came out: halt with an error
     CANCELLED = "cancelled"  # the operator cancelled mid-stage
+    NOTHING_LEFT = "nothing_left"  # no candidate survived: the run ends as a partial
 
 
 @dataclass(frozen=True)
@@ -76,16 +84,7 @@ class DiscoveryStage:
                 for source, agent_run in agent_runs.items()
             )
         )
-        statuses = [r.status for r in results]
-        if AgentRunStatus.CANCELLED in statuses:
-            return StageResult(StageOutcome.CANCELLED)
-        if AgentRunStatus.HALTED_BUDGET in statuses:
-            halted = [r for r in results if r.status is AgentRunStatus.HALTED_BUDGET]
-            return StageResult(StageOutcome.HALTED_BUDGET, halted[0].error)
-        if all(s is AgentRunStatus.FAILED for s in statuses):
-            errors = "; ".join(r.error for r in results if r.error)
-            return StageResult(StageOutcome.FAILED, f"every discovery agent failed: {errors}")
-        return StageResult(StageOutcome.COMPLETED)
+        return outcome_of(results, "discovery")
 
     def _agent_runs(self, ctx: StageContext) -> dict[SignalSource, AgentRun]:
         with self._sessions() as session:
@@ -109,3 +108,128 @@ class DiscoveryStage:
                 repo.add(agent_run)
             session.commit()
         return created
+
+
+class ScreeningStage:
+    """Triage over every undecided lead of the run (specs.md §5.2)."""
+
+    def __init__(
+        self, sessions: sessionmaker[Session], runtime: AgentRuntime, budget: ResearchBudget
+    ) -> None:
+        self._sessions = sessions
+        self._runtime = runtime
+        self._budget = budget
+
+    async def run(self, ctx: StageContext) -> StageResult:
+        with self._sessions() as session:
+            store = EvidenceStore(session)
+            leads = LeadRepository(session).list_for_run(ctx.run.id)
+            sources = store.sources_for(c for lead in leads for c in lead.claims())
+            prior: dict[UUID, PriorMatch] = {}
+            for lead in leads:
+                if lead.status is not LeadStatus.NEW:
+                    continue
+                match = store.find_duplicate(lead)  # cross-run index only
+                if match is not None and match.indexed_status is not None:
+                    prior[lead.id] = PriorMatch(
+                        match.indexed_status, match.lead_id, match.opportunity_id
+                    )
+        agent_run = single_agent_run(self._sessions, ctx.stage, "triage", ModelTier.CHEAP)
+        result = await self._runtime.run(
+            TriageAgent(leads, sources, prior),
+            agent_run.id,
+            budget=self._budget,
+            run_budget=ctx.run_budget,
+            should_stop=ctx.should_stop,
+        )
+        outcome = outcome_of([result], "triage")
+        if outcome.outcome is StageOutcome.COMPLETED and not self._survivors(ctx.run.id):
+            return StageResult(StageOutcome.NOTHING_LEFT, "no lead survived triage")
+        return outcome
+
+    def _survivors(self, run_id: UUID) -> list[Lead]:
+        with self._sessions() as session:
+            return LeadRepository(session).list_for_run(run_id, LeadStatus.KEPT)
+
+
+class ShallowValidationStage:
+    """Rough full-framework scores for the triage top-N (specs.md §5.3). Picks the
+    candidates once, on first entry; a resumed stage scores the same ones."""
+
+    def __init__(
+        self,
+        sessions: sessionmaker[Session],
+        runtime: AgentRuntime,
+        budget: ResearchBudget,
+        *,
+        fetch_pages: bool = True,
+    ) -> None:
+        self._sessions = sessions
+        self._runtime = runtime
+        self._budget = budget
+        self._fetch_pages = fetch_pages
+
+    async def run(self, ctx: StageContext) -> StageResult:
+        config = ctx.run.run_config
+        with self._sessions() as session:
+            leads = LeadRepository(session).list_for_run(ctx.run.id)
+            shortlisted = [lead for lead in leads if lead.status is LeadStatus.SHORTLISTED]
+            kept = sorted(
+                (lead for lead in leads if lead.status is LeadStatus.KEPT),
+                key=lambda lead: lead.triage.rank if lead.triage and lead.triage.rank else 10**6,
+            )
+            candidates = (
+                shortlisted + kept[: max(config.lead_targets.shortlist_n - len(shortlisted), 0)]
+            )
+            sources = EvidenceStore(session).sources_for(
+                c for lead in candidates for c in lead.claims()
+            )
+        if not candidates:
+            return StageResult(StageOutcome.NOTHING_LEFT, "no triaged lead to validate")
+        profile = get_profile(config.profile_ref)
+        agent_run = single_agent_run(
+            self._sessions, ctx.stage, "shallow_validation", ModelTier.MEDIUM
+        )
+        result = await self._runtime.run(
+            ShallowValidationAgent(
+                candidates,
+                sources,
+                profile,
+                profile.weights_for(config),
+                fetch_pages=self._fetch_pages,
+            ),
+            agent_run.id,
+            budget=self._budget,
+            run_budget=ctx.run_budget,
+            should_stop=ctx.should_stop,
+        )
+        return outcome_of([result], "shallow validation")
+
+
+def outcome_of(results: list[AgentResult], what: str) -> StageResult:
+    """A stage's outcome from its agents' results."""
+    statuses = [r.status for r in results]
+    if AgentRunStatus.CANCELLED in statuses:
+        return StageResult(StageOutcome.CANCELLED)
+    if AgentRunStatus.HALTED_BUDGET in statuses:
+        halted = [r for r in results if r.status is AgentRunStatus.HALTED_BUDGET]
+        return StageResult(StageOutcome.HALTED_BUDGET, halted[0].error)
+    if all(s is AgentRunStatus.FAILED for s in statuses):
+        errors = "; ".join(r.error for r in results if r.error)
+        return StageResult(StageOutcome.FAILED, f"{what} failed: {errors}")
+    return StageResult(StageOutcome.COMPLETED)
+
+
+def single_agent_run(
+    sessions: sessionmaker[Session], stage: Stage, agent_name: str, tier: ModelTier
+) -> AgentRun:
+    """The stage's one agent run of that name, created on first entry."""
+    with sessions() as session:
+        repo = AgentRunRepository(session)
+        for existing in repo.list_for_stage(stage.id):
+            if existing.agent_name == agent_name:
+                return existing
+        agent_run = AgentRun(stage_id=stage.id, agent_name=agent_name, model_tier=tier)
+        repo.add(agent_run)
+        session.commit()
+    return agent_run

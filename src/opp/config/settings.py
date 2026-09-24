@@ -50,6 +50,17 @@ class Settings(BaseSettings):
     discovery_max_searches: int = Field(default=8, ge=1)
     discovery_max_llm_calls: int = Field(default=10, ge=1)
 
+    # Triage: cheap tier, one call per batch of 8 leads (specs.md §21.2: under $1).
+    triage_max_cost_usd: float = Field(default=1.0, gt=0)
+    triage_max_llm_calls: int = Field(default=10, ge=1)
+
+    # Shallow validation: medium tier, per run of the stage (specs.md §21.2: ~$3). One
+    # search and at most one page fetch per candidate.
+    shallow_max_cost_usd: float = Field(default=3.0, gt=0)
+    shallow_max_llm_calls: int = Field(default=10, ge=1)
+    shallow_max_searches: int = Field(default=8, ge=0)
+    shallow_max_fetches: int = Field(default=5, ge=0)
+
 
 @lru_cache
 def get_settings() -> Settings:

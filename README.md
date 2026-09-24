@@ -27,9 +27,10 @@ uv sync
 uv run alembic upgrade head          # create/upgrade the SQLite database (./data/opp.db)
 cp .env.example .env                 # add OPP_TAVILY_API_KEY and an Anthropic key
 
-# Discovery-only run: mines the signal sources and lists sourced leads.
+# A run: discovery -> triage -> shallow validation, ending with a ranked shortlist
+# (the checkpoint and deep research come next).
 uv run opp discover --industry HVAC --leads 20
-uv run opp leads <run-id>            # list a run's leads again later
+uv run opp leads <run-id>            # shortlist, survivors and kill reasons, again later
 uv run opp resume <run-id>           # continue a run that was interrupted
 uv run opp resume <run-id> --budget 25   # ...or one halted on budget, with a top-up
 uv run opp recover                   # continue every run cut off mid-stage (e.g. after a restart)

@@ -1,0 +1,30 @@
+{
+  "generic_patterns": [
+    {"name": "AI chatbot for X", "regex": "\\b(ai|gpt|llm)[- ]?(powered )?(chat ?bot|assistant|copilot)s? for\\b"},
+    {"name": "Uber for X", "regex": "\\b(uber|airbnb|netflix|tinder|spotify) for\\b"},
+    {"name": "productivity app", "regex": "\\bproductivity (app|tool|platform|suite)\\b"},
+    {"name": "app for small businesses", "regex": "\\b(app|platform|tool|software|saas) for (all )?(small|local) business(es)?\\b"},
+    {"name": "all-in-one platform", "regex": "\\ball[- ]in[- ]one (platform|app|solution|suite)\\b"},
+    {"name": "social network for X", "regex": "\\bsocial (network|platform|media app) for\\b"},
+    {"name": "marketplace for everything", "regex": "\\bmarketplace for (everything|anything|everyone)\\b"},
+    {"name": "AI wrapper", "regex": "\\b(use|using|leverage|leveraging) ai to (help|make|improve)\\b"}
+  ],
+  "vague_customers": [
+    "business", "businesses", "small business", "small businesses", "small business owner",
+    "small business owners", "smb", "smbs", "sme", "smes", "company", "companies",
+    "enterprise", "enterprises", "startup", "startups", "developer", "developers",
+    "consumer", "consumers", "people", "everyone", "anyone", "user", "users", "customer",
+    "customers", "individual", "individuals", "professional", "professionals",
+    "organization", "organizations", "team", "teams", "someone", "creator", "creators"
+  ],
+  "vague_why_now": [
+    "\\bai (is|keeps) (getting|becoming) (better|cheaper|smarter)\\b",
+    "\\b(rise|advances?|progress) (of|in) (ai|artificial intelligence|llms?)\\b",
+    "\\b(growing|increasing|rising) (demand|interest|adoption|popularity)\\b",
+    "\\bdigital transformation\\b",
+    "\\b(the )?market is growing\\b",
+    "\\bmore (and more )?people (are|now)\\b",
+    "\\bpost[- ]pandemic\\b",
+    "\\bno specific recent change\\b"
+  ]
+}
