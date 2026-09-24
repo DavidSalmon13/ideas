@@ -12,13 +12,30 @@ It optimizes for the chain **Evidence → Opportunity → Validation → Economi
 
 ## Status
 
-Design complete; implementation not yet started. The design is captured across three documents (read in order):
+Design complete; implementation in progress (Phases 0–2 done, Phase 3 under way; the checklist in [`plan.md`](./plan.md) §35 is the live status). The design is captured across three documents (read in order):
 
 1. **[`intent.md`](./intent.md)** — product & engineering *intent* (the WHAT and WHY): vision, principles, agent architecture, evaluation framework, constraints. The source of truth.
 2. **[`specs.md`](./specs.md)** — the implementation-ready *product specification* (the detailed HOW-it-behaves): UX, inputs, data models, agent contracts, run lifecycle, failure handling, MVP scope, and testable acceptance criteria.
 3. **[`plan.md`](./plan.md)** — the *engineering plan* (the concrete HOW-to-build): technical architecture, technology choices, repository/DB design, build phases, vertical slices, risk registers, and the first end-to-end milestone.
 
-No implementation code exists yet.
+Choices made where the docs were silent are logged in [`docs/decisions.md`](./docs/decisions.md).
+
+## Running it
+
+```bash
+uv sync
+uv run alembic upgrade head          # create/upgrade the SQLite database (./data/opp.db)
+cp .env.example .env                 # add OPP_TAVILY_API_KEY and an Anthropic key
+
+# Discovery-only run: mines the signal sources and lists sourced leads.
+uv run opp discover --industry HVAC --leads 20
+uv run opp leads <run-id>            # list a run's leads again later
+
+# Offline, from a recorded cassette (no keys needed); --cassette-mode record saves one.
+uv run opp discover --industry HVAC --cassette path/to/cassette.json
+
+uv run pytest                        # the whole suite runs offline
+```
 
 ## How it works (high level)
 
@@ -66,6 +83,6 @@ These are **profile parameters**, not global constants — the system is designe
 
 ## Next steps
 
-- Begin **Phase 0** (foundation) from [`plan.md`](./plan.md) §23 when ready to build.
+- Continue the build from the first unchecked item in [`plan.md`](./plan.md) §35.
 - Calibrate real per-run cost against the $20 ceiling on the first ~10 runs (top technical risk).
 - Resolve the remaining open questions in [`specs.md`](./specs.md) §26 (e.g., signal-source breadth at MVP, skills-affect-score).

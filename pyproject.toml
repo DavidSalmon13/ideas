@@ -16,6 +16,9 @@ dependencies = [
     "uvicorn[standard]>=0.30",
 ]
 
+[project.scripts]
+opp = "opp.cli.main:main"
+
 [dependency-groups]
 dev = [
     "mypy>=1.11",

@@ -20,14 +20,16 @@ def routing_from_settings(settings: Settings) -> ModelRouting:
     )
 
 
+def build_provider(settings: Settings) -> LLMProvider:
+    key = settings.anthropic_api_key
+    return AnthropicProvider(
+        api_key=key.get_secret_value() if key and key.get_secret_value() else None,
+        timeout_s=settings.llm_timeout_s,
+        max_retries=settings.llm_max_retries,
+    )
+
+
 def build_gateway(
     settings: Settings, sink: TraceSink, *, provider: LLMProvider | None = None
 ) -> LLMGateway:
-    if provider is None:
-        key = settings.anthropic_api_key
-        provider = AnthropicProvider(
-            api_key=key.get_secret_value() if key and key.get_secret_value() else None,
-            timeout_s=settings.llm_timeout_s,
-            max_retries=settings.llm_max_retries,
-        )
-    return LLMGateway(provider, routing_from_settings(settings), sink)
+    return LLMGateway(provider or build_provider(settings), routing_from_settings(settings), sink)

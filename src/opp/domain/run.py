@@ -124,6 +124,9 @@ class AgentRun(Entity):
     attempt: int = Field(default=1, ge=1)
     work_ledger: WorkLedger = Field(default_factory=WorkLedger)
     summary: str = ""
+    # What this agent run has committed so far (e.g. {"leads": 4, "claims": 12}); lets an
+    # agent stop at its target even after a resume.
+    output_counts: dict[str, int] = Field(default_factory=dict)
     input_ref: str | None = None
     output_ref: str | None = None
     tokens_in: int = Field(default=0, ge=0)

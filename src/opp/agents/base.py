@@ -215,6 +215,8 @@ class AgentContext:
     tools: AgentTools
     budget: AgentBudget
     done_tasks: list[str] = field(default_factory=list)
+    # Committed output so far for this agent run, e.g. {"leads": 4, "claims": 12}.
+    output_counts: dict[str, int] = field(default_factory=dict)
 
 
 class Agent(ABC):

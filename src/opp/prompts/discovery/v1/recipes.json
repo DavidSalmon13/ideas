@@ -1,0 +1,67 @@
+{
+  "unmet_need": {
+    "name": "Unmet-need / complaint mining",
+    "evidence_pattern": "people in a specific role or business describing a recurring problem, workaround or wish in forums, communities and reviews",
+    "freshness": "year",
+    "queries": [
+      "$subject \"is there a tool\" OR \"wish there was\" reddit",
+      "$subject frustrated manual process forum",
+      "$subject biggest headache workflow",
+      "$subject \"we still use spreadsheets\"",
+      "$subject \"how do you handle\" small business owners",
+      "$subject complaint about current process"
+    ]
+  },
+  "incumbent_weakness": {
+    "name": "Incumbent-weakness mining",
+    "evidence_pattern": "users of an existing product complaining about price, missing features, complexity or poor fit for their segment",
+    "freshness": "year",
+    "queries": [
+      "$subject software too expensive for small teams reviews",
+      "$subject software alternatives complaints",
+      "$subject tool \"switched from\" missing features",
+      "$subject software reviews cons g2 capterra",
+      "$subject \"overkill\" software small business",
+      "$subject vendor price increase customers unhappy"
+    ]
+  },
+  "regulatory_tech_change": {
+    "name": "Regulatory / technology-change mining",
+    "evidence_pattern": "a specific recent regulation, rule, deadline, standard or technology change that creates a new obligation or makes a new solution possible for a specific group",
+    "freshness": "year",
+    "queries": [
+      "$subject new regulation compliance deadline 2026",
+      "$subject new rule requirements small businesses",
+      "$subject compliance change affects",
+      "$subject new standard mandatory reporting",
+      "$subject API or platform change impact businesses",
+      "$subject law change what businesses need to do"
+    ]
+  },
+  "manual_process": {
+    "name": "Expensive-manual-process mining",
+    "evidence_pattern": "job posts, service offerings or workflow descriptions showing people paid to do repetitive manual work that software or a small service could take over",
+    "freshness": "year",
+    "queries": [
+      "$subject job posting data entry coordinator manual",
+      "$subject virtual assistant hired to manually",
+      "$subject outsourced back office process",
+      "$subject hours per week spent on paperwork",
+      "$subject agency service manual reporting",
+      "$subject admin workload manual reconciliation"
+    ]
+  },
+  "market_inefficiency": {
+    "name": "Market-inefficiency / arbitrage mining",
+    "evidence_pattern": "a gap between supply and demand, an underserved distribution channel, or a large price difference for the same thing between markets or segments",
+    "freshness": "year",
+    "queries": [
+      "$subject hard to find supplier shortage",
+      "$subject price difference between markets",
+      "$subject underserved customers no provider",
+      "$subject long waitlist demand exceeds supply",
+      "$subject buyers can't find sellers marketplace gap",
+      "$subject fragmented market no aggregator"
+    ]
+  }
+}
