@@ -28,7 +28,7 @@ from opp.domain.enums import (
 )
 from opp.domain.evaluation import Evaluation
 from opp.domain.evidence import Claim, Source
-from opp.domain.lead import Kill, Lead
+from opp.domain.lead import Kill, Lead, UnsourcedLeadError
 from opp.domain.opportunity import Experiment, Opportunity
 from opp.domain.report import Report, Trace
 from opp.domain.run import AgentRun, ResearchRun, Stage
@@ -96,6 +96,11 @@ class RunRepository(DocRepository[ResearchRun, models.RunRow]):
     def list_by_status(self, status: RunStatus) -> list[ResearchRun]:
         return self._all(select(models.RunRow).where(models.RunRow.status == status.value))
 
+    def list_recent(self, limit: int = 20) -> list[ResearchRun]:
+        return self._all(
+            select(models.RunRow).order_by(models.RunRow.created_at.desc()).limit(limit)
+        )
+
     def list_resumable(self) -> list[ResearchRun]:
         """Non-terminal runs the recovery scan should continue (plan.md §10)."""
         terminal = [s.value for s in TERMINAL_RUN_STATUSES]
@@ -152,6 +157,9 @@ class LeadRepository(DocRepository[Lead, models.LeadRow]):
     _domain_type = Lead
 
     def _row(self, obj: Lead) -> models.LeadRow:
+        # The single write path for leads, so the invariant lives here.
+        if not obj.source_ids:
+            raise UnsourcedLeadError(f"lead {obj.id} ({obj.title!r}) cites no source")
         return models.LeadRow(
             id=obj.id,
             run_id=obj.run_id,

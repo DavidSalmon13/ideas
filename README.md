@@ -12,7 +12,7 @@ It optimizes for the chain **Evidence → Opportunity → Validation → Economi
 
 ## Status
 
-Design complete; implementation in progress (Phases 0–2 done, Phase 3 under way; the checklist in [`plan.md`](./plan.md) §35 is the live status). The design is captured across three documents (read in order):
+Design complete; implementation in progress (Phases 0–3 done; the checklist in [`plan.md`](./plan.md) §35 is the live status). The design is captured across three documents (read in order):
 
 1. **[`intent.md`](./intent.md)** — product & engineering *intent* (the WHAT and WHY): vision, principles, agent architecture, evaluation framework, constraints. The source of truth.
 2. **[`specs.md`](./specs.md)** — the implementation-ready *product specification* (the detailed HOW-it-behaves): UX, inputs, data models, agent contracts, run lifecycle, failure handling, MVP scope, and testable acceptance criteria.
@@ -30,6 +30,10 @@ cp .env.example .env                 # add OPP_TAVILY_API_KEY and an Anthropic k
 # Discovery-only run: mines the signal sources and lists sourced leads.
 uv run opp discover --industry HVAC --leads 20
 uv run opp leads <run-id>            # list a run's leads again later
+uv run opp runs                      # recent runs with status and cost
+uv run opp resume <run-id>           # continue after a crash or Ctrl-C, from the ledgers
+uv run opp resume <run-id> --budget 25   # top up a budget-halted run and continue
+uv run opp check <run-id>            # audit: every lead sourced, every fact linked
 
 # Offline, from a recorded cassette (no keys needed); --cassette-mode record saves one.
 uv run opp discover --industry HVAC --cassette path/to/cassette.json

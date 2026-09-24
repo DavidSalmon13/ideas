@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from sqlalchemy.orm import Session
@@ -47,7 +48,7 @@ from opp.domain.enums import (
 )
 from opp.domain.evaluation import DimensionScore, Evaluation
 from opp.domain.evidence import Claim, Source
-from opp.domain.lead import Kill, Lead
+from opp.domain.lead import Kill, Lead, UnsourcedLeadError
 from opp.domain.opportunity import Competitor, Experiment, Opportunity
 from opp.domain.report import Report, Trace
 from opp.domain.run import AgentRun, ResearchRun, Stage
@@ -78,7 +79,10 @@ def _lead(run_id, **kwargs) -> Lead:  # type: ignore[no-untyped-def]
         title="HVAC scheduling pain",
         business_shape=BusinessShape.SAAS,
         named_customer=_claim("independent HVAC contractors"),
-        specific_pain=_claim("hate current scheduling tools"),
+        # The repository refuses leads that cite nothing; this one cites a source id.
+        specific_pain=_claim("hate current scheduling tools").model_copy(
+            update={"source_ids": [uuid4()]}
+        ),
         why_now=_claim("new state licensing API in 2025"),
         signal_source=SignalSource.UNMET_NEED,
         **kwargs,
@@ -353,3 +357,14 @@ def test_dedup_index_upsert(session: Session) -> None:
     assert repo.get("hash-1").status is DedupStatus.DISCARDED  # type: ignore[union-attr]
     assert [e.dedup_hash for e in repo.list_by_status(DedupStatus.DISCARDED)] == ["hash-1"]
     assert repo.list_by_status(DedupStatus.ACTIVE) == []
+
+
+def test_unsourced_leads_are_never_written(session: Session) -> None:
+    run = ResearchRun()
+    RunRepository(session).add(run)
+    unsourced = _lead(run.id).model_copy(update={"specific_pain": _claim("no source")})
+
+    with pytest.raises(UnsourcedLeadError):
+        LeadRepository(session).add(unsourced)
+    with pytest.raises(UnsourcedLeadError):
+        LeadRepository(session).upsert(unsourced)

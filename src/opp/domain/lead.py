@@ -11,6 +11,11 @@ from opp.domain.enums import BusinessShape, FailedGate, KillSubject, LeadStatus,
 from opp.domain.evidence import Claim
 
 
+class UnsourcedLeadError(ValueError):
+    """A lead none of whose claims cites a source. It can never be persisted (specs.md
+    §25.1: "a lead with no source is impossible to produce")."""
+
+
 class Lead(Entity):
     """A candidate found by discovery. Its three specificity claims are what triage tests."""
 

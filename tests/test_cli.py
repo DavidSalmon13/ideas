@@ -3,6 +3,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from opp.agents.budget import ResearchBudget
@@ -11,6 +12,7 @@ from opp.cassettes.providers import CassetteLLMProvider, CassetteSearchProvider
 from opp.cli.discover import DiscoveryServices, run_discovery
 from opp.cli.main import main
 from opp.config.settings import get_settings
+from opp.db import models
 from opp.db.base import Base
 from opp.db.repositories import LeadRepository, RunRepository, SourceRepository
 from opp.db.session import create_db_engine, create_session_factory
@@ -96,7 +98,7 @@ def test_cli_discover_replays_a_cassette_offline(
     assert "4 lead(s)" in out
     assert "Dispatch for small HVAC shops" in out
     assert "source:   https://www.reddit.com/r/HVAC/comments/" in out
-    assert "unmet_need: completed, 2 lead(s)" in out
+    assert "unmet_need: completed, 2 new lead(s)" in out
     with sessions() as session:
         runs = RunRepository(session).list_by_status(RunStatus.COMPLETED_PARTIAL)
         [run] = runs
@@ -132,3 +134,77 @@ def test_cli_leads_for_an_unknown_run(
     run_id = uuid4()
     assert main(["leads", str(run_id)]) == 0
     assert f"No run {run_id}" in capsys.readouterr().out
+
+
+@pytest.fixture
+def fake_providers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The CLI's real provider wiring, swapped for offline fakes."""
+    monkeypatch.setattr("opp.cli.main._providers", lambda *_: (DiscoveryLLM(), SnippetSearch()))
+
+
+def _run_id(out: str) -> str:
+    return out.rsplit("Run id: ", 1)[1].split()[0]
+
+
+def test_cli_budget_halt_then_top_up_and_resume(
+    sessions: sessionmaker[Session],
+    fake_providers: None,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # $0.02 covers a search but not the first extraction's pre-flight estimate.
+    assert main(["discover", "--signal", "unmet_need", "--leads", "2", "--budget", "0.02"]) == 0
+    out = capsys.readouterr().out
+    run_id = _run_id(out)
+    assert "status=halted_budget" in out
+    assert f"opp resume {run_id} --budget" in out
+
+    assert main(["resume", run_id, "--budget", "1"]) == 0
+    out = capsys.readouterr().out
+    assert "status=completed_partial" in out
+    assert "2 lead(s)" in out
+    assert "of $1.00" in out
+
+    assert main(["check", run_id]) == 0
+    assert "OK: 2 lead(s)" in capsys.readouterr().out
+    assert main(["resume", run_id, "--budget", "0.5"]) == 2  # can't lower the ceiling
+    assert "raise" in capsys.readouterr().err
+
+
+def test_cli_runs_lists_recent_runs(
+    sessions: sessionmaker[Session], fake_providers: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["runs"]) == 0
+    assert "No runs yet." in capsys.readouterr().out
+    main(["discover", "--signal", "unmet_need", "--leads", "1"])
+    run_id = _run_id(capsys.readouterr().out)
+
+    assert main(["runs"]) == 0
+    out = capsys.readouterr().out
+    assert run_id in out and "completed_partial" in out
+
+
+def test_cli_check_reports_evidence_violations(
+    sessions: sessionmaker[Session], fake_providers: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    main(["discover", "--signal", "unmet_need", "--leads", "1"])
+    run_id = _run_id(capsys.readouterr().out)
+    # Corrupt the stored lead behind the repositories' back: drop its sources.
+    with sessions() as session:
+        row = session.scalars(select(models.LeadRow)).one()
+        data = dict(row.data)
+        for key in ("named_customer", "specific_pain", "why_now"):
+            data[key] = {**data[key], "source_ids": []}
+        row.data = data
+        session.commit()
+
+    assert main(["check", run_id]) == 1
+    out = capsys.readouterr().out
+    assert "cites no source" in out and "problem(s)" in out
+    assert main(["check", str(uuid4())]) == 2
+
+
+def test_cli_resume_unknown_run(
+    sessions: sessionmaker[Session], fake_providers: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["resume", str(uuid4())]) == 2
+    assert "No run" in capsys.readouterr().err

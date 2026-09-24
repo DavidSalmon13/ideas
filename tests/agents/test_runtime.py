@@ -19,13 +19,24 @@ from opp.db.base import Base
 from opp.db.repositories import (
     AgentRunRepository,
     ClaimRepository,
+    LeadRepository,
     RunRepository,
     StageRepository,
     TraceRepository,
 )
 from opp.db.session import create_db_engine, create_session_factory
-from opp.domain.enums import AgentRunStatus, ClaimType, Level, ModelTier, SourceType, StageName
+from opp.domain.enums import (
+    AgentRunStatus,
+    BusinessShape,
+    ClaimType,
+    Level,
+    ModelTier,
+    SignalSource,
+    SourceType,
+    StageName,
+)
 from opp.domain.evidence import Claim, Source
+from opp.domain.lead import Lead
 from opp.domain.run import AgentRun, ResearchRun, Stage
 from opp.llm.fake import FakeLLMProvider, reply
 from opp.llm.gateway import LLMGateway, ModelRoute, ModelRouting
@@ -395,3 +406,50 @@ def test_finished_agent_runs_are_not_rerun(sessions: sessionmaker[Session]) -> N
 
     assert again.status is AgentRunStatus.COMPLETED
     assert agent.ran == []
+
+
+class LeadAgent(ToyAgent):
+    """Returns one sourced and one unsourced lead per sub-task."""
+
+    async def run_subtask(self, task: str, ctx: AgentContext) -> SubTaskResult:
+        base = await super().run_subtask(task, ctx)
+        source = base.sources[0]
+
+        def lead(title: str, sources: list[UUID]) -> Lead:
+            def claim(text: str) -> Claim:
+                return Claim(
+                    statement=text,
+                    type=ClaimType.FACT,
+                    source_ids=sources,
+                    confidence=Level.MEDIUM,
+                    confidence_reason="snippet",
+                )
+
+            return Lead(
+                run_id=ctx.run_id,
+                title=title,
+                business_shape=BusinessShape.SAAS,
+                named_customer=claim(f"{title} customer"),
+                specific_pain=claim(f"{title} pain"),
+                why_now=claim(f"{title} why now"),
+                signal_source=SignalSource.UNMET_NEED,
+            )
+
+        return SubTaskResult(
+            sources=[source],
+            leads=[lead(f"sourced {task}", [source.id]), lead(f"unsourced {task}", [])],
+        )
+
+
+def test_unsourced_leads_are_rejected_at_commit(sessions: sessionmaker[Session]) -> None:
+    run_id, agent_run_id = make_agent_run(sessions)
+    rt, _, _ = runtime(sessions, points(2))
+
+    result = go(rt, LeadAgent(["q1", "q2"]), agent_run_id)
+
+    assert result.status is AgentRunStatus.COMPLETED
+    assert (result.leads_saved, result.rejected_leads) == (2, 2)
+    with sessions() as session:
+        titles = sorted(lead.title for lead in LeadRepository(session).list_for_run(run_id))
+    assert titles == ["sourced q1", "sourced q2"]
+    assert load(sessions, agent_run_id).output_counts["leads"] == 2

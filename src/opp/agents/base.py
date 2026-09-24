@@ -73,6 +73,7 @@ class AgentResult:
     claims_saved: int = 0
     leads_saved: int = 0
     demoted_claims: int = 0
+    rejected_leads: int = 0
     error: str | None = None
 
     @property

@@ -40,7 +40,7 @@ from opp.db.repositories import AgentRunRepository, RunRepository, StageReposito
 from opp.domain.base import utcnow
 from opp.domain.enums import AgentRunStatus, StageName
 from opp.domain.evidence import Claim
-from opp.domain.lead import Lead
+from opp.domain.lead import Lead, UnsourcedLeadError
 from opp.domain.run import AgentRun, RunConfig
 from opp.evidence.store import EvidenceStore
 from opp.evidence.validator import IssueKind
@@ -71,6 +71,7 @@ class _Tally:
     claims: int = 0
     leads: int = 0
     demoted: int = 0
+    rejected_leads: int = 0
 
 
 class AgentRuntime:
@@ -233,10 +234,19 @@ class AgentRuntime:
             store = EvidenceStore(session)
             ids = {source.id: store.add_source(source).id for source in output.sources}
             counts = agent_run.output_counts
+            saved_leads = 0
             for lead in output.leads:
-                _, report = store.save_lead(_remap_lead(lead, ids))
-                tally.leads += 1
+                try:
+                    _, report = store.save_lead(_remap_lead(lead, ids))
+                except UnsourcedLeadError as exc:
+                    tally.rejected_leads += 1
+                    log.warning(
+                        "lead_rejected_unsourced", agent=agent_run.agent_name, error=str(exc)
+                    )
+                    continue
+                saved_leads += 1
                 tally.demoted += len(report.claim_ids(IssueKind.DEMOTED_UNSOURCED))
+            tally.leads += saved_leads
             if output.claims:
                 claims, report = store.save_claims(
                     [_remap(claim, ids) for claim in output.claims],
@@ -245,7 +255,7 @@ class AgentRuntime:
                 tally.claims += len(claims)
                 tally.demoted += len(report.claim_ids(IssueKind.DEMOTED_UNSOURCED))
             for key, amount in (
-                ("leads", len(output.leads)),
+                ("leads", saved_leads),
                 ("claims", len(output.claims)),
                 ("sources", len(ids)),
             ):
@@ -319,6 +329,7 @@ class AgentRuntime:
             claims_saved=tally.claims,
             leads_saved=tally.leads,
             demoted_claims=tally.demoted,
+            rejected_leads=tally.rejected_leads,
             error=agent_run.error,
         )
 

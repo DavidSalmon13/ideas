@@ -116,7 +116,11 @@ class EvidenceStore:
     # --- leads ---------------------------------------------------------------------------
 
     def save_lead(self, lead: Lead) -> tuple[Lead, ValidationReport]:
-        """Validate a lead's claims, fingerprint it and store it with its claims."""
+        """Validate a lead's claims, fingerprint it and store it with its claims.
+
+        Raises ``UnsourcedLeadError`` when, after validation (which drops source refs that
+        don't resolve to a stored Source), no claim cites a source: such a lead is never
+        written."""
         lead, report = validate_lead(lead, self.sources_for(lead.claims()))
         lead.dedup_hash = lead_dedup_hash(lead)
         self._leads.upsert(lead)
