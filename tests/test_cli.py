@@ -91,12 +91,14 @@ def test_cli_discover_replays_a_cassette_offline(
         ]
     )  # fmt: skip
 
-    out = capsys.readouterr().out
+    captured = capsys.readouterr()
+    out = captured.out
     assert code == 0
+    assert "Started run " in captured.err and "opp resume " in captured.err
     assert "4 lead(s)" in out
     assert "Dispatch for small HVAC shops" in out
     assert "source:   https://www.reddit.com/r/HVAC/comments/" in out
-    assert "unmet_need: completed, 2 lead(s)" in out
+    assert "unmet_need: completed, 2 new lead(s)" in out
     with sessions() as session:
         runs = RunRepository(session).list_by_status(RunStatus.COMPLETED_PARTIAL)
         [run] = runs

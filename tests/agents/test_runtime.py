@@ -3,7 +3,7 @@ import json
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, ClassVar
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import BaseModel
@@ -19,13 +19,24 @@ from opp.db.base import Base
 from opp.db.repositories import (
     AgentRunRepository,
     ClaimRepository,
+    LeadRepository,
     RunRepository,
     StageRepository,
     TraceRepository,
 )
 from opp.db.session import create_db_engine, create_session_factory
-from opp.domain.enums import AgentRunStatus, ClaimType, Level, ModelTier, SourceType, StageName
+from opp.domain.enums import (
+    AgentRunStatus,
+    BusinessShape,
+    ClaimType,
+    Level,
+    ModelTier,
+    SignalSource,
+    SourceType,
+    StageName,
+)
 from opp.domain.evidence import Claim, Source
+from opp.domain.lead import Lead
 from opp.domain.run import AgentRun, ResearchRun, Stage
 from opp.llm.fake import FakeLLMProvider, reply
 from opp.llm.gateway import LLMGateway, ModelRoute, ModelRouting
@@ -395,3 +406,64 @@ def test_finished_agent_runs_are_not_rerun(sessions: sessionmaker[Session]) -> N
 
     assert again.status is AgentRunStatus.COMPLETED
     assert agent.ran == []
+
+
+class LeadAgent(Agent):
+    """One sub-task yielding a sourced lead and a lead whose only citation was never
+    handed to the runtime (so it resolves to nothing once stored)."""
+
+    name: ClassVar[str] = "leads"
+    default_tier: ClassVar[ModelTier] = ModelTier.CHEAP
+
+    def plan(self, ctx: AgentContext) -> list[str]:
+        return ["only"]
+
+    async def run_subtask(self, task: str, ctx: AgentContext) -> SubTaskResult:
+        kept = Source(
+            url="https://www.reddit.com/r/HVAC/comments/1",
+            title="thread",
+            source_type=SourceType.FORUM,
+            credibility_tier=Level.LOW,
+            excerpt="dispatching by phone wastes hours",
+        )
+        ghost = kept.model_copy(update={"id": uuid4(), "url": "https://ghost.example/"})
+
+        def lead(title: str, source: Source) -> Lead:
+            def claim(text: str) -> Claim:
+                return Claim(
+                    statement=text,
+                    type=ClaimType.FACT,
+                    source_ids=[source.id],
+                    confidence=Level.MEDIUM,
+                    confidence_reason="stated in the thread",
+                )
+
+            return Lead(
+                run_id=ctx.run_id,
+                title=title,
+                business_shape=BusinessShape.SAAS,
+                named_customer=claim("HVAC shops with 2-5 trucks"),
+                specific_pain=claim("dispatching by phone"),
+                why_now=claim("new refrigerant rules"),
+                signal_source=SignalSource.UNMET_NEED,
+            )
+
+        return SubTaskResult(sources=[kept], leads=[lead("real", kept), lead("ghost", ghost)])
+
+
+def test_a_lead_without_a_stored_source_is_dropped_on_commit(
+    sessions: sessionmaker[Session],
+) -> None:
+    run_id, agent_run_id = make_agent_run(sessions)
+    rt, _, _ = runtime(sessions, [])
+
+    result = go(rt, LeadAgent(), agent_run_id)
+
+    assert result.status is AgentRunStatus.COMPLETED
+    assert (result.leads_saved, result.leads_rejected) == (1, 1)
+    with sessions() as session:
+        [lead] = LeadRepository(session).list_for_run(run_id)
+    assert lead.title == "real" and lead.source_ids
+    stored = load(sessions, agent_run_id)
+    assert stored.output_counts == {"leads": 1, "sources": 1}
+    assert "dropped unsourced lead 'ghost'" in stored.summary

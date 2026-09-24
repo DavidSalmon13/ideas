@@ -3,11 +3,14 @@
     opp discover [--signal SOURCE ...] [--industry ...] [--geography ...]
                  [--target-customer ...] [--leads N] [--budget USD]
                  [--cassette PATH [--cassette-mode replay|record|once]]
+    opp resume RUN_ID [--budget USD] [--cassette PATH [--cassette-mode ...]]
     opp leads RUN_ID
 
 ``--cassette`` with the default ``replay`` mode runs fully offline from a recording (no
 API keys needed); ``record``/``once`` call the real providers and save what they return.
-Without a cassette, searches go through the SQLite cache.
+Without a cassette, searches go through the SQLite cache. ``discover`` prints the run id
+before it starts, so a run that was interrupted (or halted on budget) can be continued
+with ``resume``: finished sub-tasks are not repeated.
 """
 
 import argparse
@@ -22,10 +25,19 @@ from sqlalchemy.orm import Session, sessionmaker
 from opp.agents.budget import ResearchBudget
 from opp.cassettes.cassette import Cassette, CassetteMode
 from opp.cassettes.providers import CassetteLLMProvider, CassetteSearchProvider
-from opp.cli.discover import DiscoveryServices, format_leads, run_discovery
+from opp.cli.discover import (
+    DiscoveryOutcome,
+    DiscoveryServices,
+    ResumeError,
+    create_discovery_run,
+    execute_discovery,
+    format_leads,
+    resume_discovery,
+)
 from opp.config.settings import Settings, get_settings
+from opp.db.repositories import RunRepository
 from opp.db.session import create_db_engine, create_session_factory
-from opp.domain.enums import SignalSource
+from opp.domain.enums import RunStatus, SignalSource
 from opp.domain.run import DiscoveryScope, LeadTargets, RunConfig
 from opp.llm.factory import build_gateway, build_provider
 from opp.llm.types import LLMProvider
@@ -53,14 +65,23 @@ def build_parser() -> argparse.ArgumentParser:
     discover.add_argument("--target-customer")
     discover.add_argument("--leads", type=int, default=30, help="lead target across sources")
     discover.add_argument("--budget", type=float, default=20.0, help="run ceiling in USD")
-    discover.add_argument("--cassette", help="cassette file to replay from or record to")
-    discover.add_argument(
-        "--cassette-mode", choices=[m.value for m in CassetteMode], default="replay"
-    )
+    _cassette_args(discover)
+
+    resume = commands.add_parser("resume", help="continue an interrupted or halted run")
+    resume.add_argument("run_id", type=UUID)
+    resume.add_argument("--budget", type=float, help="new run ceiling in USD (a top-up)")
+    _cassette_args(resume)
 
     leads = commands.add_parser("leads", help="list the leads of a run")
     leads.add_argument("run_id", type=UUID)
     return parser
+
+
+def _cassette_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--cassette", help="cassette file to replay from or record to")
+    parser.add_argument(
+        "--cassette-mode", choices=[m.value for m in CassetteMode], default="replay"
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -77,30 +98,56 @@ def main(argv: list[str] | None = None) -> int:
             print(format_leads(sessions, args.run_id))
             return 0
         return _discover(args, settings, sessions)
+    except ResumeError as exc:
+        print(exc, file=sys.stderr)
+        return 1
     finally:
         engine.dispose()
 
 
 def _discover(args: argparse.Namespace, settings: Settings, sessions: sessionmaker[Session]) -> int:
-    run_config = RunConfig(
-        discovery_scope=DiscoveryScope(
-            industry=args.industry, geography=args.geography, target_customer=args.target_customer
-        ),
-        lead_targets=LeadTargets(discovery_n=args.leads),
-        budget_ceiling_usd=args.budget,
-    )
-    signals = [SignalSource(s) for s in args.signal] if args.signal else list(SignalSource)
     cassette = (
         Cassette.open(args.cassette, CassetteMode(args.cassette_mode)) if args.cassette else None
     )
     try:
-        llm, search = _providers(settings, sessions, cassette)
+        services = _services(settings, sessions, cassette)
     except SearchConfigError as exc:
         print(f"Search is not configured: {exc}", file=sys.stderr)
         return 2
 
+    if args.command == "resume":
+        print(f"Resuming run {args.run_id}", file=sys.stderr)
+        work = resume_discovery(services, args.run_id, budget_ceiling_usd=args.budget)
+    else:
+        run_config = RunConfig(
+            discovery_scope=DiscoveryScope(
+                industry=args.industry,
+                geography=args.geography,
+                target_customer=args.target_customer,
+            ),
+            lead_targets=LeadTargets(discovery_n=args.leads),
+            budget_ceiling_usd=args.budget,
+        )
+        signals = [SignalSource(s) for s in args.signal] if args.signal else list(SignalSource)
+        run_id = create_discovery_run(sessions, run_config, signals)
+        print(f"Started run {run_id} (continue it with: opp resume {run_id})", file=sys.stderr)
+        work = execute_discovery(services, run_id)
+    try:
+        outcome = asyncio.run(work)
+    finally:
+        if cassette is not None:
+            cassette.save()
+
+    _print_outcome(sessions, outcome)
+    return 0
+
+
+def _services(
+    settings: Settings, sessions: sessionmaker[Session], cassette: Cassette | None
+) -> DiscoveryServices:
+    llm, search = _providers(settings, sessions, cassette)
     sink = DbTraceSink(sessions)
-    services = DiscoveryServices(
+    return DiscoveryServices(
         sessions=sessions,
         gateway=build_gateway(settings, sink, provider=llm),
         search=search,
@@ -113,22 +160,25 @@ def _discover(args: argparse.Namespace, settings: Settings, sessions: sessionmak
         ),
         search_cost_estimate_usd=settings.search_cost_per_call_usd,
     )
-    try:
-        outcome = asyncio.run(run_discovery(services, run_config, signals))
-    finally:
-        if cassette is not None:
-            cassette.save()
 
+
+def _print_outcome(sessions: sessionmaker[Session], outcome: DiscoveryOutcome) -> None:
     print(format_leads(sessions, outcome.run_id))
     print()
     for signal, result in outcome.results.items():
         line = (
-            f"{signal.value}: {result.status.value}, {result.leads_saved} lead(s), "
+            f"{signal.value}: {result.status.value}, {result.leads_saved} new lead(s), "
             f"{result.tasks_done} search(es), ${result.cost_usd:.4f}"
         )
+        if result.leads_rejected:
+            line += f", {result.leads_rejected} unsourced lead(s) dropped"
         print(line + (f" - {result.error}" if result.error else ""))
-    print(f"Total cost ${outcome.cost_usd:.4f} of ${args.budget:.2f}. Run id: {outcome.run_id}")
-    return 0
+    with sessions() as session:
+        run = RunRepository(session).get(outcome.run_id)
+    ceiling = run.budget_ceiling_usd if run is not None else 0.0
+    print(f"Total cost ${outcome.cost_usd:.4f} of ${ceiling:.2f}. Run id: {outcome.run_id}")
+    if outcome.status is RunStatus.HALTED_BUDGET:
+        print(f"Halted on budget. Continue with: opp resume {outcome.run_id} --budget USD")
 
 
 def _providers(

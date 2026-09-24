@@ -30,6 +30,8 @@ cp .env.example .env                 # add OPP_TAVILY_API_KEY and an Anthropic k
 # Discovery-only run: mines the signal sources and lists sourced leads.
 uv run opp discover --industry HVAC --leads 20
 uv run opp leads <run-id>            # list a run's leads again later
+uv run opp resume <run-id>           # continue a run that was interrupted
+uv run opp resume <run-id> --budget 25   # ...or one halted on budget, with a top-up
 
 # Offline, from a recorded cassette (no keys needed); --cassette-mode record saves one.
 uv run opp discover --industry HVAC --cassette path/to/cassette.json
