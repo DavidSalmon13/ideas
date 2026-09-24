@@ -609,7 +609,7 @@ This is the earliest point the product demonstrates its core value: a grounded, 
 - [x] `SearchProvider` abstraction + default adapter
 - [x] SSRF-guarded `Fetcher` + extractor + source normalization + cache
 - [x] `LLMGateway` (tiers, structured outputs, metering) + fallback
-- [ ] Cassette record/replay
+- [x] Cassette record/replay
 
 **Phase 3 — First slice (Discovery)**
 - [ ] Agent base + runtime (sub-task loop, compaction, budget guard)

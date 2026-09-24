@@ -9,6 +9,7 @@ PACKAGES = [
     "opp.evidence",
     "opp.research",
     "opp.llm",
+    "opp.cassettes",
     "opp.agents",
     "opp.agents.specialists",
     "opp.orchestration",
