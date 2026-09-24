@@ -613,7 +613,7 @@ This is the earliest point the product demonstrates its core value: a grounded, 
 
 **Phase 3 — First slice (Discovery)**
 - [x] Agent base + runtime (sub-task loop, compaction, budget guard)
-- [ ] DiscoveryAgent + CLI run
+- [x] DiscoveryAgent + CLI run
 - [ ] Leads/claims/sources persisted; **no lead without a source**; resume works
 
 **Phase 4 — Funnel orchestration**

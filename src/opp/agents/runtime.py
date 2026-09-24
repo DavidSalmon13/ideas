@@ -213,6 +213,7 @@ class AgentRuntime:
             memory=memory,
             tools=tools,
             budget=budget,
+            output_counts=dict(agent_run.output_counts),
         )
 
     def _commit(
@@ -231,6 +232,7 @@ class AgentRuntime:
         with self._sessions() as session:
             store = EvidenceStore(session)
             ids = {source.id: store.add_source(source).id for source in output.sources}
+            counts = agent_run.output_counts
             for lead in output.leads:
                 _, report = store.save_lead(_remap_lead(lead, ids))
                 tally.leads += 1
@@ -242,6 +244,14 @@ class AgentRuntime:
                 )
                 tally.claims += len(claims)
                 tally.demoted += len(report.claim_ids(IssueKind.DEMOTED_UNSOURCED))
+            for key, amount in (
+                ("leads", len(output.leads)),
+                ("claims", len(output.claims)),
+                ("sources", len(ids)),
+            ):
+                if amount:
+                    counts[key] = counts.get(key, 0) + amount
+            ctx.output_counts = dict(counts)
 
             ledger.pending = [t for t in ledger.pending if t != task]
             if task not in ledger.done:

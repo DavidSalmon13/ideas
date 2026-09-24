@@ -71,7 +71,8 @@ class SearchError(Exception):
 
 @runtime_checkable
 class SearchProvider(Protocol):
-    name: str
+    @property
+    def name(self) -> str: ...
 
     async def search(
         self, query: str, *, k: int = 10, freshness: Freshness = Freshness.ANY
