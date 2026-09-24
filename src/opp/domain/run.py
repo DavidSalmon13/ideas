@@ -106,6 +106,8 @@ class WorkLedger(DomainModel):
 
     done: list[str] = Field(default_factory=list)
     pending: list[str] = Field(default_factory=list)
+    # Sub-tasks that were attempted and failed (they also count as done: not retried).
+    failed: list[str] = Field(default_factory=list)
 
     @property
     def next_task(self) -> str | None:

@@ -239,6 +239,9 @@ class AgentRunStatus(StrEnum):
     DEGRADED = "degraded"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    # Stopped because the agent's or the run's budget can't afford the next call; the
+    # pending sub-tasks stay in the ledger so a top-up can resume it (intent.md §21.3).
+    HALTED_BUDGET = "halted_budget"
 
 
 class ModelTier(StrEnum):
