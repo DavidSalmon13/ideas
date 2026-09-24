@@ -90,6 +90,19 @@ class EvidenceStore:
         claims = list(claims)
         return validate_claims(claims, self.sources_for(claims))
 
+    def save_claims(
+        self,
+        claims: Iterable[Claim],
+        *,
+        lead_id: UUID | None = None,
+        opportunity_id: UUID | None = None,
+    ) -> tuple[list[Claim], ValidationReport]:
+        """Validate claims and store them, optionally under a lead or an opportunity."""
+        validated, report = self.validate(claims)
+        for claim in validated:
+            self._claims.upsert(claim, lead_id=lead_id, opportunity_id=opportunity_id)
+        return validated, report
+
     def trace(self, claim_id: UUID) -> Provenance | None:
         """Claim -> the sources it rests on, for the traceability invariant (specs.md §8.3)."""
         claim = self._claims.get(claim_id)

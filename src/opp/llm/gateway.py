@@ -24,7 +24,7 @@ from pydantic import BaseModel, ValidationError
 from opp.domain.base import DomainModel
 from opp.domain.enums import ModelTier, StageName, TraceKind
 from opp.domain.report import Trace
-from opp.llm.pricing import cost_usd, price_for
+from opp.llm.pricing import cost_usd, estimate_max_cost_usd, price_for
 from opp.llm.types import (
     Completion,
     CompletionRequest,
@@ -125,6 +125,22 @@ class LLMGateway:
         self._routing = routing
         self._sink = sink
         self._max_reasks = max_reasks
+
+    def estimate_cost(
+        self,
+        tier: ModelTier,
+        *,
+        prompt_chars: int,
+        max_tokens: int = 16_000,
+        opus_premium: bool = False,
+    ) -> float:
+        """Upper-bound cost of one call on this tier, for budget pre-checks: the priciest
+        model on the route (the fallback may cost more), the full ``max_tokens`` output."""
+        route = self._routing.route(tier, opus_premium=opus_premium)
+        return max(
+            estimate_max_cost_usd(model, prompt_chars=prompt_chars, max_tokens=max_tokens)
+            for model in route.models()
+        )
 
     async def structured[T: BaseModel](
         self,
