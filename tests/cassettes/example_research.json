@@ -1,0 +1,79 @@
+{
+  "interactions": [
+    {
+      "key": "ba1682e5a7c72109a5d5ed4da50407bb",
+      "kind": "search",
+      "request": {
+        "freshness": "year",
+        "k": 5,
+        "query": "HVAC contractor scheduling pain"
+      },
+      "response": {
+        "cost_usd": 0.008,
+        "latency_ms": 2,
+        "provider": "tavily",
+        "query": "HVAC contractor scheduling pain",
+        "results": [
+          {
+            "published_date": "2026-06-02",
+            "score": 0.88,
+            "snippet": "Most independent HVAC contractors with under 10 techs still schedule jobs by phone and whiteboard, owners told us.",
+            "title": "Small HVAC shops still dispatch by phone",
+            "url": "https://www.achrnews.com/articles/hvac-dispatch"
+          },
+          {
+            "published_date": null,
+            "score": 0.81,
+            "snippet": "ServiceTitan wants $300+/month per tech. We're a 4 truck shop. Still using Google Calendar.",
+            "title": "r/HVAC: scheduling software is too expensive",
+            "url": "https://www.reddit.com/r/HVAC/comments/abc123"
+          }
+        ]
+      }
+    },
+    {
+      "key": "d50ffeabf988d47c731c82a961e815b2",
+      "kind": "fetch",
+      "request": {
+        "url": "https://fieldpulse.example.com/pricing"
+      },
+      "response": {
+        "content_type": "text/html",
+        "final_url": "https://fieldpulse.example.com/pricing",
+        "size_bytes": 121,
+        "status_code": 200,
+        "text": "<html><head><title>Pricing</title></head><body><article><p>Starter: $49/month per technician.</p></article></body></html>",
+        "truncated": false,
+        "url": "https://fieldpulse.example.com/pricing"
+      }
+    },
+    {
+      "key": "910ba5320f0e8d5194539981f91ee214",
+      "kind": "llm",
+      "request": {
+        "max_tokens": 1024,
+        "messages": [
+          {
+            "content": "Propose one lead from the evidence.",
+            "role": "user"
+          }
+        ],
+        "model": "claude-haiku-4-5",
+        "output_type": "LeadIdea@23c0a78ac23d",
+        "system": "You are a discovery analyst."
+      },
+      "response": {
+        "model": "claude-haiku-4-5",
+        "stop_reason": "end_turn",
+        "text": "{\"title\": \"Affordable dispatch for 2-10 truck HVAC shops\", \"customer\": \"independent HVAC contractors with 2-10 technicians\", \"pain\": \"scheduling by phone and whiteboard; incumbents priced per tech\"}",
+        "usage": {
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "input_tokens": 850,
+          "output_tokens": 120
+        }
+      }
+    }
+  ],
+  "version": 1
+}
