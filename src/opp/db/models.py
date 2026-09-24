@@ -236,3 +236,28 @@ class DedupIndexRow(Base):
     lead_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime)
     updated_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class SearchCacheRow(DocRow):
+    """A cached search response (plan.md §17). ``data`` is the SearchResponse JSON."""
+
+    __tablename__ = "search_cache"
+    __table_args__ = (UniqueConstraint("cache_key", name="uq_search_cache_cache_key"),)
+
+    cache_key: Mapped[str] = mapped_column(String)
+    provider: Mapped[str] = mapped_column(String)
+    query: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class PageCacheRow(DocRow):
+    """A cached fetched page, keyed by canonical-URL hash. ``data`` is the RawPage JSON."""
+
+    __tablename__ = "page_cache"
+    __table_args__ = (UniqueConstraint("url_hash", name="uq_page_cache_url_hash"),)
+
+    url_hash: Mapped[str] = mapped_column(String)
+    url: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)

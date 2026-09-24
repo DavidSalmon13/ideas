@@ -7,6 +7,8 @@ Repositories never commit — the caller owns the transaction.
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -518,3 +520,69 @@ class DedupRepository:
             )
             for row in rows
         ]
+
+
+def _as_utc(moment: datetime) -> datetime:
+    """SQLite hands datetimes back naive; they were written in UTC."""
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+
+
+class ResearchCacheRepository:
+    """Search responses and fetched pages kept for a freshness window (plan.md §17).
+
+    Stores plain JSON; the research layer owns the models. An expired entry reads as a
+    miss and is overwritten by the next ``put``."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def get_search(self, cache_key: str, *, now: datetime) -> dict[str, Any] | None:
+        return self._fresh(self._search_row(cache_key), now)
+
+    def put_search(
+        self,
+        cache_key: str,
+        data: dict[str, Any],
+        *,
+        provider: str,
+        query: str,
+        now: datetime,
+        ttl: timedelta,
+    ) -> None:
+        row = self._search_row(cache_key)
+        if row is None:
+            row = models.SearchCacheRow(id=new_id(), cache_key=cache_key)
+            self._session.add(row)
+        row.provider, row.query = provider, query
+        row.data, row.created_at, row.expires_at = data, now, now + ttl
+
+    def get_page(self, url_hash_: str, *, now: datetime) -> dict[str, Any] | None:
+        return self._fresh(self._page_row(url_hash_), now)
+
+    def put_page(
+        self, url_hash_: str, data: dict[str, Any], *, url: str, now: datetime, ttl: timedelta
+    ) -> None:
+        row = self._page_row(url_hash_)
+        if row is None:
+            row = models.PageCacheRow(id=new_id(), url_hash=url_hash_)
+            self._session.add(row)
+        row.url = url
+        row.data, row.created_at, row.expires_at = data, now, now + ttl
+
+    def _search_row(self, cache_key: str) -> models.SearchCacheRow | None:
+        return self._session.scalars(
+            select(models.SearchCacheRow).where(models.SearchCacheRow.cache_key == cache_key)
+        ).first()
+
+    def _page_row(self, url_hash_: str) -> models.PageCacheRow | None:
+        return self._session.scalars(
+            select(models.PageCacheRow).where(models.PageCacheRow.url_hash == url_hash_)
+        ).first()
+
+    @staticmethod
+    def _fresh(
+        row: models.SearchCacheRow | models.PageCacheRow | None, now: datetime
+    ) -> dict[str, Any] | None:
+        if row is None or _as_utc(row.expires_at) <= now:
+            return None
+        return row.data

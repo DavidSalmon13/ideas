@@ -607,7 +607,7 @@ This is the earliest point the product demonstrates its core value: a grounded, 
 
 **Phase 2 — Research + LLM infra**
 - [x] `SearchProvider` abstraction + default adapter
-- [ ] SSRF-guarded `Fetcher` + extractor + source normalization + cache
+- [x] SSRF-guarded `Fetcher` + extractor + source normalization + cache
 - [ ] `LLMGateway` (tiers, structured outputs, metering) + fallback
 - [ ] Cassette record/replay
 

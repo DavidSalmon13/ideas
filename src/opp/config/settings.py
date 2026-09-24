@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     search_cost_per_call_usd: float = Field(default=0.008, ge=0)
     search_timeout_s: float = Field(default=20.0, gt=0)
     search_max_retries: int = Field(default=2, ge=0, le=5)
+    search_cache_ttl_hours: float = Field(default=168.0, ge=0)
+
+    # Fetching (plan.md §17-§18): SSRF-guarded, size- and time-capped.
+    fetch_timeout_s: float = Field(default=15.0, gt=0)
+    fetch_max_bytes: int = Field(default=2_000_000, gt=0)
+    fetch_max_redirects: int = Field(default=5, ge=0, le=10)
+    page_cache_ttl_hours: float = Field(default=720.0, ge=0)
 
 
 @lru_cache
