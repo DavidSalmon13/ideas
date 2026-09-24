@@ -1,15 +1,17 @@
 """Run configuration and the nested run -> stage -> agent state (specs.md §3.3, §19)."""
 
 from datetime import datetime
+from typing import Self
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from opp.domain.base import DomainModel, Entity, utcnow
 from opp.domain.enums import (
     TERMINAL_RUN_STATUSES,
     AgentRunStatus,
     BusinessShape,
+    CheckpointAction,
     CheckpointMode,
     Dimension,
     Level,
@@ -74,6 +76,30 @@ class RunConfig(DomainModel):
     lead_targets: LeadTargets = Field(default_factory=LeadTargets)
 
 
+class CheckpointDecision(DomainModel):
+    """What was decided at the checkpoint. Vetoes and re-picks carry the operator's
+    one-line reason (it feeds preference learning, intent.md §19); autonomous mode's
+    auto-selection has none."""
+
+    action: CheckpointAction
+    lead_id: UUID | None = None
+    reason: str | None = None
+    auto: bool = False
+    decided_at: datetime = Field(default_factory=utcnow)
+
+    @model_validator(mode="after")
+    def _rules(self) -> Self:
+        if self.action is CheckpointAction.VETO:
+            if self.lead_id is not None:
+                raise ValueError("a veto selects no lead")
+        elif self.lead_id is None:
+            raise ValueError(f"{self.action.value} needs the selected lead")
+        needs_reason = self.action in (CheckpointAction.VETO, CheckpointAction.REPICK)
+        if needs_reason and not self.auto and not (self.reason and self.reason.strip()):
+            raise ValueError(f"a {self.action.value} needs a one-line reason")
+        return self
+
+
 class ResearchRun(Entity):
     status: RunStatus = RunStatus.CREATED
     run_config: RunConfig = Field(default_factory=RunConfig)
@@ -83,6 +109,9 @@ class ResearchRun(Entity):
     status_reason: str | None = None
     # Cooperative cancel: set by the operator, honoured by the executor between sub-tasks.
     cancel_requested: bool = False
+    checkpoint: CheckpointDecision | None = None
+    # The Opportunity created from the lead chosen at the checkpoint.
+    selected_opportunity_id: UUID | None = None
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 

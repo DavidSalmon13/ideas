@@ -95,3 +95,26 @@ def test_report_halted_at_a_stage_must_be_incomplete() -> None:
 def test_trace_rejects_negative_cost() -> None:
     with pytest.raises(ValidationError):
         Trace(run_id=uuid4(), kind=TraceKind.LLM, cost_usd=-0.01)
+
+
+def test_checkpoint_decision_rules() -> None:
+    from uuid import uuid4
+
+    from pydantic import ValidationError
+
+    from opp.domain.enums import CheckpointAction
+    from opp.domain.run import CheckpointDecision
+
+    lead = uuid4()
+    assert CheckpointDecision(action=CheckpointAction.APPROVE, lead_id=lead).reason is None
+    assert CheckpointDecision(action=CheckpointAction.APPROVE, lead_id=lead, auto=True).auto
+    CheckpointDecision(action=CheckpointAction.REPICK, lead_id=lead, reason="better margins")
+    CheckpointDecision(action=CheckpointAction.VETO, reason="all need field sales")
+    for bad in (
+        {"action": CheckpointAction.REPICK, "lead_id": lead},  # no reason
+        {"action": CheckpointAction.VETO, "reason": " "},  # blank reason
+        {"action": CheckpointAction.VETO, "lead_id": lead, "reason": "x"},  # veto picks none
+        {"action": CheckpointAction.APPROVE},  # approve picks one
+    ):
+        with pytest.raises(ValidationError):
+            CheckpointDecision(**bad)  # type: ignore[arg-type]

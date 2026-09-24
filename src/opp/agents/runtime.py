@@ -10,9 +10,11 @@ orchestrator (plan.md §31):
 - **Compaction.** Before every LLM call (and every sub-task) the runtime checks the
   working memory's size; past the threshold it folds it into a new summary, persists it,
   and the agent's next prompt is rebuilt from that compact state.
-- **Budget guard.** Tool calls are pre-checked (``AgentTools``); when the next call can't
-  be afforded the run of this agent stops as ``HALTED_BUDGET`` with the sub-task still
-  pending, which is what the orchestrator turns into a stop-and-wait.
+- **Budget guard.** Tool calls are pre-checked (``AgentTools``). When the agent's own
+  research budget can't afford the next call, the agent is done with what it has
+  (``DEGRADED``, the rest left pending). When the *run* can't afford it, the agent stops
+  as ``HALTED_BUDGET`` with the sub-task still pending, which the orchestrator turns into
+  a stop-and-wait for a top-up.
 - **Resume.** Running an interrupted agent run again rehydrates from its ledger and
   summary and continues with the next pending sub-task.
 - **Degrade, don't crash.** A sub-task that fails on an LLM/search/fetch error is recorded
@@ -65,6 +67,8 @@ _FINISHED = frozenset(
         AgentRunStatus.CANCELLED,
     }
 )
+FINISHED_AGENT_STATUSES = _FINISHED
+
 # Failures that mean "this sub-task couldn't be done", not "the agent is broken".
 _DEGRADE_ERRORS = (LLMError, SearchError, FetchError, PromptTooLargeError)
 
@@ -148,8 +152,16 @@ class AgentRuntime:
                 try:
                     output = await agent.run_subtask(task, ctx)
                 except BudgetExceededError as exc:
+                    log.info("agent_budget_stop", agent=agent.name, task=task, scope=exc.scope)
+                    if exc.scope == "agent":
+                        # The agent's own research budget is spent: it's done, with what it
+                        # found (specs.md §5.1 "stops when ... budget exhausted").
+                        agent_run.error = f"research budget exhausted: {exc}"
+                        return self._finish(
+                            agent_run, ctx, run_budget, tally, AgentRunStatus.DEGRADED
+                        )
+                    # The run is out of money: stop and wait for a top-up.
                     agent_run.error = str(exc)
-                    log.info("agent_halted_budget", agent=agent.name, task=task, scope=exc.scope)
                     return self._finish(
                         agent_run, ctx, run_budget, tally, AgentRunStatus.HALTED_BUDGET, end=False
                     )

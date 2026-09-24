@@ -27,12 +27,17 @@ uv sync
 uv run alembic upgrade head          # create/upgrade the SQLite database (./data/opp.db)
 cp .env.example .env                 # add OPP_TAVILY_API_KEY and an Anthropic key
 
-# A run: discovery -> triage -> shallow validation, ending with a ranked shortlist
-# (the checkpoint and deep research come next).
-uv run opp discover --industry HVAC --leads 20
+# A run: discovery -> triage -> shallow validation -> the checkpoint, where it waits
+# for you with a ranked shortlist (deep research comes next).
+uv run opp discover --industry HVAC --leads 20   # add --autonomous to skip the wait
+uv run opp checkpoint <run-id>       # the shortlist and your options
+uv run opp approve <run-id>          # deep-research #1 (--pick N --reason "..." for another)
+uv run opp veto <run-id> --reason "..."    # none of them
 uv run opp leads <run-id>            # shortlist, survivors and kill reasons, again later
 uv run opp resume <run-id>           # continue a run that was interrupted
 uv run opp resume <run-id> --budget 25   # ...or one halted on budget, with a top-up
+uv run opp accept <run-id>           # or accept a halted run's partial result
+uv run opp report <run-id>           # the latest report (incomplete runs get one too)
 uv run opp recover                   # continue every run cut off mid-stage (e.g. after a restart)
 uv run opp cancel <run-id>           # cancel a run; committed work is kept
 

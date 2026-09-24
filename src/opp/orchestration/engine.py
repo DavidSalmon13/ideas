@@ -15,11 +15,18 @@ import structlog
 from sqlalchemy.orm import Session, sessionmaker
 
 from opp.agents.budget import RunBudget
-from opp.db.repositories import RunRepository, StageRepository, TraceRepository
+from opp.db.repositories import (
+    ReportRepository,
+    RunRepository,
+    StageRepository,
+    TraceRepository,
+)
 from opp.domain.base import utcnow
-from opp.domain.enums import RunStatus, StageName, StageStatus
-from opp.domain.run import ResearchRun, RunConfig, Stage
+from opp.domain.enums import CheckpointAction, RunStatus, StageName, StageStatus
+from opp.domain.report import Report
+from opp.domain.run import CheckpointDecision, ResearchRun, RunConfig, Stage
 from opp.orchestration.machine import (
+    ENDINGS,
     HALTED,
     STAGE_OF,
     STATUS_OF,
@@ -27,7 +34,13 @@ from opp.orchestration.machine import (
     is_live,
     next_status,
 )
-from opp.orchestration.stages import StageContext, StageHandler, StageOutcome
+from opp.orchestration.stages import (
+    StageContext,
+    StageHandler,
+    StageOutcome,
+    ranked_shortlist,
+)
+from opp.reporting.partial import build_partial_report
 
 log = structlog.get_logger(__name__)
 
@@ -85,13 +98,6 @@ class Orchestrator:
                     f"the pipeline currently ends before the {stage_name.value} stage",
                 )
             run_budget = self._run_budget(run)
-            if run_budget.remaining_usd <= 0:
-                return self._move(
-                    run,
-                    RunStatus.HALTED_BUDGET,
-                    f"the ${run_budget.ceiling_usd:.2f} budget is spent",
-                )
-
             stage = self._open_stage(run, stage_name)
             ctx = StageContext(
                 run=run,
@@ -99,6 +105,18 @@ class Orchestrator:
                 run_budget=run_budget,
                 should_stop=lambda: self._cancel_requested(run_id),
             )
+            # Budget pre-check (specs.md §21.3): never start a stage the rest of the
+            # budget can't afford. The stage stays open; a top-up resumes it.
+            needed = handler.estimate_usd(ctx)
+            if run_budget.remaining_usd <= 0 or needed > run_budget.remaining_usd + 1e-9:
+                return self._move(
+                    run,
+                    RunStatus.HALTED_BUDGET,
+                    f"the {stage_name.value} stage may need up to ${needed:.2f}; "
+                    f"${run_budget.remaining_usd:.2f} of the ${run_budget.ceiling_usd:.2f} "
+                    "budget is left",
+                    spent=run_budget.spent_usd,
+                )
             log.info("stage_started", run_id=str(run_id), stage=stage_name.value)
             try:
                 result = await handler.run(ctx)
@@ -164,15 +182,66 @@ class Orchestrator:
         self._save(run, reason=run.status_reason)
         return run
 
+    def decide_checkpoint(
+        self,
+        run_id: UUID,
+        *,
+        veto: bool = False,
+        pick: int | None = None,
+        reason: str | None = None,
+    ) -> ResearchRun:
+        """Record the operator's checkpoint call (specs.md §2.7): approve the top-ranked
+        lead, re-pick the lead at shortlist rank ``pick`` (reason required), or veto
+        (reason required). ``execute`` then carries on from the checkpoint."""
+        run = self.get_run(run_id)
+        if run.status is not RunStatus.AWAITING_CHECKPOINT:
+            raise RunStateError(f"Run {run_id} is {run.status.value}, not at the checkpoint.")
+        if run.checkpoint is not None:
+            raise RunStateError(f"Run {run_id} already has a checkpoint decision.")
+        reason = reason.strip() if reason else None
+        if veto:
+            decision = CheckpointDecision(action=CheckpointAction.VETO, reason=reason)
+        else:
+            shortlist = ranked_shortlist(self._sessions, run_id)
+            rank = pick or 1
+            if not 1 <= rank <= len(shortlist):
+                raise RunStateError(f"Pick a shortlist rank from 1 to {len(shortlist)}.")
+            decision = CheckpointDecision(
+                action=CheckpointAction.APPROVE if rank == 1 else CheckpointAction.REPICK,
+                lead_id=shortlist[rank - 1].id,
+                reason=reason,
+            )
+        run.checkpoint = decision
+        self._save(run, reason=run.status_reason)
+        log.info("checkpoint_decided", run_id=str(run_id), action=decision.action.value)
+        return run
+
+    def accept_partial(self, run_id: UUID) -> ResearchRun:
+        """The operator accepts a halted run's best partial instead of resuming it."""
+        run = self.get_run(run_id)
+        if run.status not in HALTED:
+            raise RunStateError(f"Run {run_id} is {run.status.value}; only halted runs end so.")
+        return self._move(
+            run,
+            RunStatus.COMPLETED_PARTIAL,
+            f"partial accepted by the operator after: {run.status_reason or run.status.value}",
+        )
+
+    def latest_report(self, run_id: UUID) -> Report | None:
+        with self._sessions() as session:
+            reports = ReportRepository(session).list_for_run(run_id)
+        return max(reports, key=lambda r: r.created_at) if reports else None
+
     async def recover(self) -> RecoveryReport:
         """The startup recovery scan (plan.md §10): continue every run that was cut off
-        mid-stage. Halted runs and runs at the checkpoint wait for the operator."""
+        mid-stage. Halted runs and undecided checkpoints wait for the operator."""
         with self._sessions() as session:
             candidates = RunRepository(session).list_resumable()
         resumed: list[ResearchRun] = []
         waiting: list[ResearchRun] = []
         for run in sorted(candidates, key=lambda r: r.created_at):
-            if not is_live(run.status) or run.status is RunStatus.AWAITING_CHECKPOINT:
+            undecided = run.status is RunStatus.AWAITING_CHECKPOINT and run.checkpoint is None
+            if not is_live(run.status) or undecided:
                 waiting.append(run)
                 continue
             log.info("run_recovering", run_id=str(run.id), status=run.status.value)
@@ -200,7 +269,17 @@ class Orchestrator:
         if status in STAGE_OF:
             run.current_stage = STAGE_OF[status]
         self._save(run, reason=reason, spent=spent)
+        if status in ENDINGS:
+            self._emit_partial(run)
         return run
+
+    def _emit_partial(self, run: ResearchRun) -> None:
+        """Any halt, cancel or early end leaves an incomplete report (specs.md §18.4)."""
+        with self._sessions() as session:
+            report = build_partial_report(session, run)
+            ReportRepository(session).add(report)
+            session.commit()
+        log.info("partial_report", run_id=str(run.id), report_id=str(report.id))
 
     def _save(self, run: ResearchRun, *, reason: str | None, spent: float = 0.0) -> None:
         with self._sessions() as session:

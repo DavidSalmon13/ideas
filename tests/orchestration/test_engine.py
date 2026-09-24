@@ -5,13 +5,19 @@ from pathlib import Path
 from uuid import UUID
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy.orm import Session, sessionmaker
 
 from opp.db.base import Base
-from opp.db.repositories import RunRepository, StageRepository, TraceRepository
+from opp.db.repositories import (
+    ReportRepository,
+    RunRepository,
+    StageRepository,
+    TraceRepository,
+)
 from opp.db.session import create_db_engine, create_session_factory
 from opp.domain.enums import RunStatus, StageName, StageStatus, TraceKind
-from opp.domain.report import Trace
+from opp.domain.report import Report, Trace
 from opp.domain.run import ResearchRun, RunConfig, Stage
 from opp.orchestration.engine import Orchestrator, RunStateError
 from opp.orchestration.stages import StageContext, StageOutcome, StageResult
@@ -34,8 +40,12 @@ class Scripted:
         default_factory=lambda: [StageResult(StageOutcome.COMPLETED)]
     )
     cost: float = 0.0
+    estimate: float = 0.0
     calls: list[Stage] = field(default_factory=list)
     stop_seen: list[bool] = field(default_factory=list)
+
+    def estimate_usd(self, ctx: StageContext) -> float:
+        return self.estimate
 
     async def run(self, ctx: StageContext) -> StageResult:
         self.calls.append(ctx.stage)
@@ -136,7 +146,9 @@ def test_budget_halt_keeps_the_stage_open_until_a_top_up(sessions: sessionmaker[
     # The budget is spent: resuming without a top-up halts before calling the handler.
     again = asyncio.run(orch.resume(run.id))
     assert again.status is RunStatus.HALTED_BUDGET and len(handler.calls) == 1
-    assert again.status_reason == "the $1.00 budget is spent"
+    assert again.status_reason == (
+        "the discovery stage may need up to $0.00; $0.00 of the $1.00 budget is left"
+    )
 
     topped = asyncio.run(orch.resume(run.id, budget_ceiling_usd=5.0))
     assert topped.status is RunStatus.COMPLETED_PARTIAL
@@ -206,3 +218,95 @@ def test_recovery_scan_resumes_live_runs_only(sessions: sessionmaker[Session]) -
     assert [r.id for r in report.resumed] == [created]
     assert report.resumed[0].status is RunStatus.COMPLETED_PARTIAL
     assert done.id not in {r.id for r in report.waiting}  # finished runs aren't scanned
+
+
+def reports(sessions: sessionmaker[Session], run_id: UUID) -> list[Report]:
+    with sessions() as session:
+        return sorted(ReportRepository(session).list_for_run(run_id), key=lambda r: r.created_at)
+
+
+def test_pre_check_never_starts_a_stage_the_budget_cannot_afford(
+    sessions: sessionmaker[Session],
+) -> None:
+    discovery = Scripted(sessions, cost=0.5)
+    screening = Scripted(sessions, estimate=0.75)
+    orch = Orchestrator(sessions, {StageName.DISCOVERY: discovery, StageName.SCREENING: screening})
+
+    run = start(orch, RunConfig(budget_ceiling_usd=1.0))
+
+    assert run.status is RunStatus.HALTED_BUDGET
+    assert run.current_stage is StageName.SCREENING
+    assert run.status_reason == (
+        "the screening stage may need up to $0.75; $0.50 of the $1.00 budget is left"
+    )
+    assert screening.calls == []  # never started
+    # The halt left an incomplete report with the budget meter and what's missing.
+    [report] = reports(sessions, run.id)
+    assert report.incomplete and report.halted_at_stage is StageName.SCREENING
+    assert report.brief["headline"] == "INCOMPLETE - halted on budget at stage screening"
+    assert report.brief["verdict_cap"] == "promising_but_unproven"
+    assert "customer & demand" in report.brief["not_examined"]
+    assert f"opp resume {run.id} --budget USD" in report.brief["next"]
+    budget = report.dossier["budget"]
+    assert budget["spent_usd"] == pytest.approx(0.5)
+    assert budget["stages"]["discovery"]["spent_usd"] == pytest.approx(0.5)
+    assert budget["stages"]["discovery"]["target_usd"] == pytest.approx(0.175, abs=0.01)
+
+    topped = asyncio.run(orch.resume(run.id, budget_ceiling_usd=2.0))
+    assert topped.status is RunStatus.COMPLETED_PARTIAL and len(screening.calls) == 1
+    assert len(reports(sessions, run.id)) == 2  # the halt's and the end's
+
+
+def test_accepting_a_halted_run_ends_it_with_its_partial(sessions: sessionmaker[Session]) -> None:
+    handler = Scripted(sessions, [StageResult(StageOutcome.HALTED_BUDGET, "out of money")])
+    orch = Orchestrator(sessions, {StageName.DISCOVERY: handler})
+    run = start(orch)
+
+    accepted = orch.accept_partial(run.id)
+
+    assert accepted.status is RunStatus.COMPLETED_PARTIAL
+    assert accepted.status_reason == "partial accepted by the operator after: out of money"
+    latest = orch.latest_report(run.id)
+    assert latest is not None and latest.brief["status"] == "completed_partial"
+    with pytest.raises(RunStateError):
+        orch.accept_partial(run.id)
+
+
+def test_every_early_end_leaves_a_report(sessions: sessionmaker[Session]) -> None:
+    orch = Orchestrator(sessions, {StageName.DISCOVERY: Scripted(sessions)})
+    cancelled = orch.request_cancel(orch.create_run(RunConfig()))
+    partial = start(orch)
+    for run in (cancelled, partial):
+        [report] = reports(sessions, run.id)
+        assert report.incomplete
+    assert reports(sessions, cancelled.id)[0].brief["headline"] == (
+        "INCOMPLETE - cancelled before any stage ran"
+    )
+
+
+def test_checkpoint_decisions_are_validated(sessions: sessionmaker[Session]) -> None:
+    waiting = Scripted(sessions, [StageResult(StageOutcome.WAITING, "decide")])
+    orch = Orchestrator(
+        sessions,
+        {
+            StageName.DISCOVERY: Scripted(sessions),
+            StageName.SCREENING: Scripted(sessions),
+            StageName.SHALLOW_VALIDATION: Scripted(sessions),
+            StageName.CHECKPOINT: waiting,
+        },
+    )
+    run = start(orch)
+    assert run.status is RunStatus.AWAITING_CHECKPOINT
+    with pytest.raises(ValidationError, match="needs a one-line reason"):
+        orch.decide_checkpoint(run.id, veto=True)
+    with pytest.raises(RunStateError, match="rank from 1 to 0"):
+        orch.decide_checkpoint(run.id)  # nothing shortlisted in this toy run
+
+    decided = orch.decide_checkpoint(run.id, veto=True, reason="all too sales-heavy")
+    assert decided.checkpoint is not None and decided.checkpoint.action.value == "veto"
+    with pytest.raises(RunStateError, match="already has a checkpoint decision"):
+        orch.decide_checkpoint(run.id, veto=True, reason="again")
+
+    # A decided checkpoint is picked up by the recovery scan.
+    report = asyncio.run(orch.recover())
+    assert [r.id for r in report.resumed] == [run.id]

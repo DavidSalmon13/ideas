@@ -17,14 +17,24 @@ from sqlalchemy.orm import Session, sessionmaker
 from opp.agents.base import AgentResult
 from opp.agents.budget import ResearchBudget, RunBudget
 from opp.agents.discovery import DiscoveryAgent
-from opp.agents.runtime import AgentRuntime
+from opp.agents.runtime import FINISHED_AGENT_STATUSES, AgentRuntime
 from opp.agents.shallow_validation import ShallowValidationAgent
 from opp.agents.triage import PriorMatch, TriageAgent
 from opp.config.profiles import get_profile
-from opp.db.repositories import AgentRunRepository, LeadRepository
-from opp.domain.enums import AgentRunStatus, LeadStatus, ModelTier, SignalSource
+from opp.db.repositories import AgentRunRepository, LeadRepository, RunRepository
+from opp.domain.base import new_id
+from opp.domain.enums import (
+    AgentRunStatus,
+    CheckpointAction,
+    CheckpointMode,
+    LeadStatus,
+    ModelTier,
+    SignalSource,
+)
+from opp.domain.evidence import Claim
 from opp.domain.lead import Lead
-from opp.domain.run import AgentRun, ResearchRun, Stage
+from opp.domain.opportunity import Customer, Opportunity, Problem, ProposedBusiness
+from opp.domain.run import AgentRun, CheckpointDecision, ResearchRun, Stage
 from opp.evidence.store import EvidenceStore
 
 
@@ -52,6 +62,11 @@ class StageContext:
 
 
 class StageHandler(Protocol):
+    def estimate_usd(self, ctx: StageContext) -> float:
+        """The most this stage may still spend: the budget pre-check (specs.md §21.3)
+        won't start it unless the run has that much left."""
+        ...
+
     async def run(self, ctx: StageContext) -> StageResult: ...
 
 
@@ -68,6 +83,12 @@ class DiscoveryStage:
         self._sessions = sessions
         self._runtime = runtime
         self._budget = budget
+
+    def estimate_usd(self, ctx: StageContext) -> float:
+        sources = len(ctx.run.run_config.discovery_scope.signal_sources)
+        return unspent_caps(
+            self._sessions, ctx.stage, self._budget, expected=sources, prefix=DISCOVERY_AGENT_PREFIX
+        )
 
     async def run(self, ctx: StageContext) -> StageResult:
         agent_runs = self._agent_runs(ctx)
@@ -120,6 +141,9 @@ class ScreeningStage:
         self._runtime = runtime
         self._budget = budget
 
+    def estimate_usd(self, ctx: StageContext) -> float:
+        return unspent_caps(self._sessions, ctx.stage, self._budget, prefix="triage")
+
     async def run(self, ctx: StageContext) -> StageResult:
         with self._sessions() as session:
             store = EvidenceStore(session)
@@ -168,6 +192,9 @@ class ShallowValidationStage:
         self._runtime = runtime
         self._budget = budget
         self._fetch_pages = fetch_pages
+
+    def estimate_usd(self, ctx: StageContext) -> float:
+        return unspent_caps(self._sessions, ctx.stage, self._budget, prefix="shallow_validation")
 
     async def run(self, ctx: StageContext) -> StageResult:
         config = ctx.run.run_config
@@ -233,3 +260,125 @@ def single_agent_run(
         repo.add(agent_run)
         session.commit()
     return agent_run
+
+
+def unspent_caps(
+    sessions: sessionmaker[Session],
+    stage: Stage,
+    budget: ResearchBudget,
+    *,
+    prefix: str,
+    expected: int = 1,
+) -> float:
+    """What the stage's agents may still spend: each unfinished agent's dollar cap minus
+    what it has spent; agents not created yet count in full."""
+    with sessions() as session:
+        agent_runs = [
+            a
+            for a in AgentRunRepository(session).list_for_stage(stage.id)
+            if a.agent_name.startswith(prefix)
+        ]
+    open_runs = [a for a in agent_runs if a.status not in FINISHED_AGENT_STATUSES]
+    missing = max(expected - len(agent_runs), 0)
+    return round(
+        missing * budget.max_cost_usd
+        + sum(max(budget.max_cost_usd - a.cost_usd, 0.0) for a in open_runs),
+        6,
+    )
+
+
+class CheckpointStage:
+    """The human gate before deep research (specs.md §2.7). In mandatory mode the run
+    waits here until the operator decides (``Orchestrator.decide_checkpoint``); in
+    autonomous mode the top-ranked lead is selected. Selecting a lead creates the
+    Opportunity that deep research will fill in."""
+
+    def __init__(self, sessions: sessionmaker[Session]) -> None:
+        self._sessions = sessions
+
+    def estimate_usd(self, ctx: StageContext) -> float:
+        return 0.0
+
+    async def run(self, ctx: StageContext) -> StageResult:
+        run = ctx.run
+        shortlist = ranked_shortlist(self._sessions, run.id)
+        if not shortlist:
+            return StageResult(StageOutcome.NOTHING_LEFT, "nothing was shortlisted")
+        decision = run.checkpoint
+        if decision is None:
+            if run.run_config.checkpoint_mode is not CheckpointMode.AUTONOMOUS:
+                return StageResult(
+                    StageOutcome.WAITING,
+                    "waiting for the operator to approve, re-pick or veto the shortlist",
+                )
+            decision = CheckpointDecision(
+                action=CheckpointAction.APPROVE, lead_id=shortlist[0].id, auto=True
+            )
+        if decision.action is CheckpointAction.VETO:
+            self._record(run.id, decision, None)
+            return StageResult(
+                StageOutcome.NOTHING_LEFT, f"vetoed at the checkpoint: {decision.reason}"
+            )
+
+        lead = next((le for le in shortlist if le.id == decision.lead_id), None)
+        if lead is None:
+            return StageResult(
+                StageOutcome.FAILED, f"the selected lead {decision.lead_id} is not shortlisted"
+            )
+        opportunity_id = run.selected_opportunity_id
+        if opportunity_id is None:
+            opportunity = opportunity_from_lead(lead, run.run_config.profile_ref)
+            with self._sessions() as session:
+                store = EvidenceStore(session)
+                store.save_opportunity(opportunity)
+                store.index_opportunity(opportunity)
+                session.commit()
+            opportunity_id = opportunity.id
+        self._record(run.id, decision, opportunity_id)
+        return StageResult(StageOutcome.COMPLETED)
+
+    def _record(
+        self, run_id: UUID, decision: CheckpointDecision, opportunity_id: UUID | None
+    ) -> None:
+        with self._sessions() as session:
+            runs = RunRepository(session)
+            stored = runs.get(run_id)
+            assert stored is not None
+            stored.checkpoint = decision
+            stored.selected_opportunity_id = opportunity_id
+            runs.upsert(stored)
+            session.commit()
+
+
+def ranked_shortlist(sessions: sessionmaker[Session], run_id: UUID) -> list[Lead]:
+    """The run's shortlisted leads, best first (specs.md §18.3)."""
+    with sessions() as session:
+        leads = LeadRepository(session).list_for_run(run_id, LeadStatus.SHORTLISTED)
+    return sorted(
+        leads,
+        key=lambda le: (le.shallow.rank if le.shallow and le.shallow.rank else 10**6, str(le.id)),
+    )
+
+
+def opportunity_from_lead(lead: Lead, profile_ref: str) -> Opportunity:
+    """The seed Opportunity for deep research: the lead's three claims (copied, so the
+    lead's own evidence stays as it was) placed where the Opportunity keeps them."""
+
+    def copy(claim: Claim) -> Claim:
+        return claim.model_copy(update={"id": new_id()}, deep=True)
+
+    wedge = (lead.triage.wedge if lead.triage else "") or lead.candidate_wedge
+    return Opportunity(
+        run_id=lead.run_id,
+        lead_id=lead.id,
+        title=lead.title,
+        business_shape=lead.business_shape,
+        profile_ref=profile_ref,
+        problem=Problem(description=copy(lead.specific_pain)),
+        customer=Customer(segment=copy(lead.named_customer)),
+        why_now=copy(lead.why_now),
+        risks=[f"generic pattern: {lead.triage.generic_pattern}"]
+        if lead.triage and lead.triage.generic_flag
+        else [],
+        proposed_business=ProposedBusiness(wedge=wedge),
+    )

@@ -188,6 +188,14 @@ class Override(StrEnum):
     FATAL_FLAW = "fatal_flaw"
 
 
+class CheckpointAction(StrEnum):
+    """The operator's call at the checkpoint (specs.md §2.7)."""
+
+    APPROVE = "approve"  # deep-research the top-ranked lead
+    REPICK = "repick"  # deep-research a different shortlisted lead
+    VETO = "veto"  # none of them: end the run with the shortlist
+
+
 class RunMode(StrEnum):
     OPEN_ENDED = "open_ended"
     CONSTRAINED = "constrained"

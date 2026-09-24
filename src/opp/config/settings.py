@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     llm_premium_opus_model: str = "claude-opus-4-8"
     llm_premium_opus_fallback: str | None = "claude-sonnet-5"
 
+    # A run budget above this needs explicit confirmation (specs.md §21.1).
+    max_budget_usd: float = Field(default=20.0, gt=0)
+
     # Discovery research budget, per signal-source agent (specs.md §21.2: $3-4 for all five).
     discovery_max_cost_usd: float = Field(default=0.75, gt=0)
     discovery_max_searches: int = Field(default=8, ge=1)

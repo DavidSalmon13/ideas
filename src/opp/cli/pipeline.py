@@ -25,7 +25,12 @@ from opp.domain.evidence import Claim, Source
 from opp.domain.lead import Lead
 from opp.llm.gateway import LLMGateway
 from opp.orchestration.engine import Orchestrator
-from opp.orchestration.stages import DiscoveryStage, ScreeningStage, ShallowValidationStage
+from opp.orchestration.stages import (
+    CheckpointStage,
+    DiscoveryStage,
+    ScreeningStage,
+    ShallowValidationStage,
+)
 from opp.research.fetcher import PageFetcher
 from opp.research.search import SearchProvider, TraceSink
 
@@ -49,8 +54,9 @@ class PipelineServices:
 
 
 def build_orchestrator(services: PipelineServices) -> Orchestrator:
-    """The orchestrator with every stage built so far: discovery, screening (triage) and
-    shallow validation. Runs end ``completed_partial`` before the checkpoint for now."""
+    """The orchestrator with every stage built so far: discovery, screening (triage),
+    shallow validation and the checkpoint. After the checkpoint, runs end
+    ``completed_partial`` until deep research exists."""
     runtime = AgentRuntime(
         services.sessions,
         gateway=services.gateway,
@@ -71,6 +77,7 @@ def build_orchestrator(services: PipelineServices) -> Orchestrator:
                 budgets.shallow_validation,
                 fetch_pages=services.fetcher is not None,
             ),
+            StageName.CHECKPOINT: CheckpointStage(sessions),
         },
     )
 

@@ -275,26 +275,37 @@ def test_resume_after_a_crash_continues_from_the_ledger(sessions: sessionmaker[S
     assert count(sessions, models.ClaimRow) == 3
 
 
-def test_agent_call_limit_halts_cleanly_and_resumes_after_top_up(
+def test_agent_research_budget_ends_the_agent_with_what_it_has(
     sessions: sessionmaker[Session],
 ) -> None:
     _, agent_run_id = make_agent_run(sessions)
     rt, llm, _ = runtime(sessions, points(3))
 
-    halted = go(
-        rt, ToyAgent(), agent_run_id, budget=ResearchBudget(max_cost_usd=5, max_llm_calls=1)
-    )
+    done = go(rt, ToyAgent(), agent_run_id, budget=ResearchBudget(max_cost_usd=5, max_llm_calls=1))
 
-    assert halted.status is AgentRunStatus.HALTED_BUDGET and halted.budget_exhausted
-    assert "llm limit" in (halted.error or "")
-    assert (halted.tasks_done, halted.tasks_pending) == (1, 2)
+    assert done.status is AgentRunStatus.DEGRADED and not done.budget_exhausted
+    assert "research budget exhausted" in (done.error or "") and "llm limit" in (done.error or "")
+    assert (done.tasks_done, done.tasks_pending) == (1, 2)
     assert len(llm.requests) == 1  # the blocked call was never made
+    assert load(sessions, agent_run_id).ended_at is not None
+
+    agent = ToyAgent()
+    again = go(rt, agent, agent_run_id, budget=ResearchBudget(max_cost_usd=5, max_llm_calls=10))
+    assert again.status is AgentRunStatus.DEGRADED and agent.ran == []  # final
+
+
+def test_run_budget_halt_resumes_after_top_up(sessions: sessionmaker[Session]) -> None:
+    _, agent_run_id = make_agent_run(sessions)
+    rt, _, _ = runtime(sessions, points(3))
+
+    halted = go(rt, ToyAgent(), agent_run_id, run_budget=RunBudget(ceiling_usd=0.012))
+    assert halted.status is AgentRunStatus.HALTED_BUDGET and halted.budget_exhausted
     assert load(sessions, agent_run_id).ended_at is None
 
     agent = ToyAgent()
-    resumed = go(rt, agent, agent_run_id, budget=ResearchBudget(max_cost_usd=5, max_llm_calls=10))
+    resumed = go(rt, agent, agent_run_id, run_budget=RunBudget(ceiling_usd=20))
     assert resumed.status is AgentRunStatus.COMPLETED
-    assert agent.ran == ["q2", "q3"]
+    assert agent.ran == ["q1", "q2", "q3"]  # q1 never committed: the LLM call was refused
 
 
 def test_run_budget_blocks_calls_it_cannot_afford(sessions: sessionmaker[Session]) -> None:

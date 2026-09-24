@@ -20,7 +20,14 @@ from opp.db.repositories import (
     StageRepository,
 )
 from opp.db.session import create_db_engine, create_session_factory
-from opp.domain.enums import AgentRunStatus, RunStatus, SignalSource, StageName, StageStatus
+from opp.domain.enums import (
+    AgentRunStatus,
+    CheckpointMode,
+    RunStatus,
+    SignalSource,
+    StageName,
+    StageStatus,
+)
 from opp.domain.run import AgentRun, DiscoveryScope, LeadTargets, ResearchRun, RunConfig
 from opp.orchestration.engine import Orchestrator, RunNotFoundError, RunStateError
 from opp.research.search import Freshness, SearchResponse
@@ -28,9 +35,11 @@ from tests.agents.fakes import FunnelLLM, PageStub, SnippetSearch
 from tests.test_cli import services
 
 SIGNAL = SignalSource.UNMET_NEED
+# Autonomous: these tests are about resuming, so the checkpoint picks rank 1 itself.
 CONFIG = RunConfig(
     discovery_scope=DiscoveryScope(industry="HVAC", signal_sources=[SIGNAL]),
     lead_targets=LeadTargets(discovery_n=8),
+    checkpoint_mode=CheckpointMode.AUTONOMOUS,
 )
 TIGHT = CONFIG.model_copy(update={"budget_ceiling_usd": 0.02})
 
@@ -124,6 +133,7 @@ def test_killed_run_resumes_from_the_ledger(sessions: sessionmaker[Session]) -> 
         StageName.DISCOVERY,
         StageName.SCREENING,
         StageName.SHALLOW_VALIDATION,
+        StageName.CHECKPOINT,
     }
     assert all(s.status is StageStatus.COMPLETED and s.attempt == 1 for s in stages.values())
     assert sum(s.cost_usd for s in stages.values()) == pytest.approx(run.cost_to_date_usd)
@@ -146,8 +156,12 @@ def test_recovery_scan_continues_a_killed_run(sessions: sessionmaker[Session]) -
 
 def test_budget_halt_resumes_after_a_top_up(sessions: sessionmaker[Session]) -> None:
     halted = halted_run(sessions)
-    assert agent_run(sessions, halted.id).status is AgentRunStatus.HALTED_BUDGET
-    assert halted.current_stage is StageName.DISCOVERY and halted.status_reason
+    # The pre-check stops it before discovery spends anything: 1 source x $0.75 cap.
+    assert halted.current_stage is StageName.DISCOVERY
+    assert halted.status_reason == (
+        "the discovery stage may need up to $0.75; $0.02 of the $0.02 budget is left"
+    )
+    assert halted.cost_to_date_usd == 0
 
     # Resuming without more money just halts again; nothing is lost.
     again = asyncio.run(orchestrator(sessions).resume(halted.id))
@@ -155,6 +169,8 @@ def test_budget_halt_resumes_after_a_top_up(sessions: sessionmaker[Session]) -> 
 
     topped = asyncio.run(orchestrator(sessions).resume(halted.id, budget_ceiling_usd=20.0))
     assert topped.status is RunStatus.COMPLETED_PARTIAL
+    assert topped.status_reason == "the pipeline currently ends before the deep_research stage"
+    assert topped.selected_opportunity_id is not None  # autonomous: rank 1 was selected
     assert topped.budget_ceiling_usd == 20.0
     assert sourced_leads(sessions, halted.id) == 8
 
