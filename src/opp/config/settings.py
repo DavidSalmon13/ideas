@@ -31,6 +31,20 @@ class Settings(BaseSettings):
     fetch_max_redirects: int = Field(default=5, ge=0, le=10)
     page_cache_ttl_hours: float = Field(default=720.0, ge=0)
 
+    # LLM (plan.md §16). Model IDs per tier are config; each needs a price in llm/pricing.
+    # No key here means the Anthropic SDK falls back to ANTHROPIC_API_KEY / `ant auth`.
+    anthropic_api_key: SecretStr | None = None
+    llm_timeout_s: float = Field(default=300.0, gt=0)
+    llm_max_retries: int = Field(default=2, ge=0, le=5)
+    llm_cheap_model: str = "claude-haiku-4-5"
+    llm_cheap_fallback: str | None = "claude-sonnet-5"
+    llm_medium_model: str = "claude-sonnet-5"
+    llm_medium_fallback: str | None = "claude-sonnet-4-6"
+    llm_premium_model: str = "claude-sonnet-5"
+    llm_premium_fallback: str | None = "claude-sonnet-4-6"
+    llm_premium_opus_model: str = "claude-opus-4-8"
+    llm_premium_opus_fallback: str | None = "claude-sonnet-5"
+
 
 @lru_cache
 def get_settings() -> Settings:
