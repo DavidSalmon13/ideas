@@ -32,6 +32,8 @@ uv run opp discover --industry HVAC --leads 20
 uv run opp leads <run-id>            # list a run's leads again later
 uv run opp resume <run-id>           # continue a run that was interrupted
 uv run opp resume <run-id> --budget 25   # ...or one halted on budget, with a top-up
+uv run opp recover                   # continue every run cut off mid-stage (e.g. after a restart)
+uv run opp cancel <run-id>           # cancel a run; committed work is kept
 
 # Offline, from a recorded cassette (no keys needed); --cassette-mode record saves one.
 uv run opp discover --industry HVAC --cassette path/to/cassette.json

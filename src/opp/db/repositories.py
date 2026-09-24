@@ -24,6 +24,7 @@ from opp.domain.enums import (
     LeadStatus,
     OpportunityStatus,
     RunStatus,
+    StageName,
     Verdict,
 )
 from opp.domain.evaluation import Evaluation
@@ -433,13 +434,13 @@ class TraceRepository(DocRepository[Trace, models.TraceRow]):
     def list_for_run(self, run_id: UUID) -> list[Trace]:
         return self._all(select(models.TraceRow).where(models.TraceRow.run_id == run_id))
 
-    def total_cost_for_run(self, run_id: UUID) -> float:
-        total = self._session.scalar(
-            select(func.coalesce(func.sum(models.TraceRow.cost_usd), 0.0)).where(
-                models.TraceRow.run_id == run_id
-            )
+    def total_cost_for_run(self, run_id: UUID, stage: StageName | None = None) -> float:
+        stmt = select(func.coalesce(func.sum(models.TraceRow.cost_usd), 0.0)).where(
+            models.TraceRow.run_id == run_id
         )
-        return float(total or 0.0)
+        if stage is not None:
+            stmt = stmt.where(models.TraceRow.stage == stage.value)
+        return float(self._session.scalar(stmt) or 0.0)
 
 
 @dataclass(frozen=True)

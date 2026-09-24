@@ -259,6 +259,7 @@ class AgentRuntime:
                 tally.demoted += len(report.claim_ids(IssueKind.DEMOTED_UNSOURCED))
             for key, amount in (
                 ("leads", saved_leads),
+                ("leads_rejected", len(output.leads) - saved_leads),
                 ("claims", len(output.claims)),
                 ("sources", len(ids)),
             ):

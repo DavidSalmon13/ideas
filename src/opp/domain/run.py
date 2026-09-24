@@ -16,6 +16,7 @@ from opp.domain.enums import (
     ModelTier,
     RunMode,
     RunStatus,
+    SignalSource,
     StageName,
     StageStatus,
 )
@@ -36,6 +37,10 @@ class DiscoveryScope(DomainModel):
     geography: str | None = None
     business_shape: BusinessShape | None = None
     target_customer: str | None = None
+    # Which discovery strategies to run (specs.md §4.2); all of them by default.
+    signal_sources: list[SignalSource] = Field(
+        default_factory=lambda: list(SignalSource), min_length=1
+    )
 
 
 class LeadTargets(DomainModel):
@@ -74,6 +79,10 @@ class ResearchRun(Entity):
     run_config: RunConfig = Field(default_factory=RunConfig)
     cost_to_date_usd: float = Field(default=0.0, ge=0)
     current_stage: StageName | None = None
+    # Why the run is where it is: the halt/partial reason shown to the operator.
+    status_reason: str | None = None
+    # Cooperative cancel: set by the operator, honoured by the executor between sub-tasks.
+    cancel_requested: bool = False
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 

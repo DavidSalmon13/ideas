@@ -1,21 +1,16 @@
-"""Discovery-only run: the first vertical slice (plan.md §26, slice 1).
+"""Wiring and output for the CLI's discovery slice (plan.md §26, slice 1).
 
-Creates a run, its discovery stage and one agent run per signal source, runs the
-DiscoveryAgents in parallel under one shared run budget, and records the outcome. All
-state is in the DB from the start, so a run killed mid-way (or halted on budget) is
-continued by ``resume_discovery`` from the agents' ledgers. The services are injected,
-so the CLI, tests and cassette replays all drive the same code.
+The services are injected, so the CLI, tests and cassette replays all drive the same
+orchestrator; ``format_leads``/``format_agents`` read everything back from the DB, so
+they show the same thing after a resume as after an uninterrupted run.
 """
 
-import asyncio
 from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy.orm import Session, sessionmaker
 
-from opp.agents.base import AgentResult
-from opp.agents.budget import ResearchBudget, RunBudget
-from opp.agents.discovery import DiscoveryAgent
+from opp.agents.budget import ResearchBudget
 from opp.agents.runtime import AgentRuntime
 from opp.db.repositories import (
     AgentRunRepository,
@@ -23,21 +18,13 @@ from opp.db.repositories import (
     RunRepository,
     SourceRepository,
     StageRepository,
-    TraceRepository,
 )
-from opp.domain.base import utcnow
-from opp.domain.enums import (
-    AgentRunStatus,
-    ModelTier,
-    RunStatus,
-    SignalSource,
-    StageName,
-    StageStatus,
-)
+from opp.domain.enums import StageName
 from opp.domain.evidence import Claim
 from opp.domain.lead import Lead
-from opp.domain.run import AgentRun, ResearchRun, RunConfig, Stage
 from opp.llm.gateway import LLMGateway
+from opp.orchestration.engine import Orchestrator
+from opp.orchestration.stages import DiscoveryStage
 from opp.research.search import SearchProvider, TraceSink
 
 
@@ -51,109 +38,9 @@ class DiscoveryServices:
     search_cost_estimate_usd: float
 
 
-@dataclass(frozen=True)
-class DiscoveryOutcome:
-    run_id: UUID
-    status: RunStatus
-    results: dict[SignalSource, AgentResult]
-    cost_usd: float
-
-
-AGENT_PREFIX = "discovery:"
-# A discovery-only run in one of these states still has work its ledgers can finish.
-RESUMABLE = frozenset({RunStatus.DISCOVERING, RunStatus.HALTED_BUDGET})
-
-
-class ResumeError(Exception):
-    """The run can't be resumed (unknown, finished, or not a discovery-only run)."""
-
-
-async def run_discovery(
-    services: DiscoveryServices,
-    run_config: RunConfig,
-    signal_sources: list[SignalSource],
-) -> DiscoveryOutcome:
-    run_id = create_discovery_run(services.sessions, run_config, signal_sources)
-    return await execute_discovery(services, run_id)
-
-
-def create_discovery_run(
-    sessions: sessionmaker[Session], run_config: RunConfig, signal_sources: list[SignalSource]
-) -> UUID:
-    """Persist the run, its discovery stage and one pending agent run per signal source.
-    Everything later needs only the run id, which is what makes the run resumable."""
-    run = ResearchRun(
-        run_config=run_config, status=RunStatus.DISCOVERING, current_stage=StageName.DISCOVERY
-    )
-    stage = Stage(
-        run_id=run.id,
-        name=StageName.DISCOVERY,
-        status=StageStatus.RUNNING,
-        started_at=utcnow(),
-    )
-    with sessions() as session:
-        RunRepository(session).add(run)
-        StageRepository(session).add(stage)
-        for source in signal_sources:
-            AgentRunRepository(session).add(
-                AgentRun(
-                    stage_id=stage.id,
-                    agent_name=f"{AGENT_PREFIX}{source.value}",
-                    model_tier=ModelTier.CHEAP,
-                )
-            )
-        session.commit()
-    return run.id
-
-
-async def resume_discovery(
-    services: DiscoveryServices, run_id: UUID, *, budget_ceiling_usd: float | None = None
-) -> DiscoveryOutcome:
-    """Continue an interrupted or budget-halted discovery run from its agents' ledgers.
-
-    Finished agents are left alone; the others pick up at their next pending sub-task
-    with the leads they already committed counted. ``budget_ceiling_usd`` raises (or
-    sets) the run's ceiling, the top-up a budget halt waits for."""
-    with services.sessions() as session:
-        runs = RunRepository(session)
-        run = runs.get(run_id)
-        if run is None:
-            raise ResumeError(f"No run {run_id}.")
-        if run.status not in RESUMABLE:
-            raise ResumeError(f"Run {run_id} is {run.status.value}; there is nothing to resume.")
-        if budget_ceiling_usd is not None:
-            run.run_config = run.run_config.model_copy(
-                update={"budget_ceiling_usd": budget_ceiling_usd}
-            )
-        run.status = RunStatus.DISCOVERING
-        run.updated_at = utcnow()
-        runs.upsert(run)
-        session.commit()
-    return await execute_discovery(services, run_id)
-
-
-async def execute_discovery(services: DiscoveryServices, run_id: UUID) -> DiscoveryOutcome:
-    """Run (or keep running) the discovery agents of a created run and record the outcome."""
-    with services.sessions() as session:
-        run = RunRepository(session).get(run_id)
-        run_stages = StageRepository(session).list_for_run(run_id)
-        stage = next((s for s in run_stages if s.name is StageName.DISCOVERY), None)
-        if run is None or stage is None:
-            raise ResumeError(f"Run {run_id} has no discovery stage.")
-        agent_runs = {
-            SignalSource(a.agent_name.removeprefix(AGENT_PREFIX)): a
-            for a in AgentRunRepository(session).list_for_stage(stage.id)
-            if a.agent_name.startswith(AGENT_PREFIX)
-        }
-        # Traces are written the moment a call finishes, so they also hold the spend of a
-        # sub-task that was cut off before it could commit.
-        spent = max(run.cost_to_date_usd, TraceRepository(session).total_cost_for_run(run_id))
-        if stage.status is not StageStatus.RUNNING:
-            stage.status = StageStatus.RUNNING
-            stage.ended_at = None
-            StageRepository(session).upsert(stage)
-            session.commit()
-
+def build_orchestrator(services: DiscoveryServices) -> Orchestrator:
+    """The orchestrator with every stage built so far: discovery only, for now. Runs
+    therefore end ``completed_partial`` after discovery."""
     runtime = AgentRuntime(
         services.sessions,
         gateway=services.gateway,
@@ -161,57 +48,10 @@ async def execute_discovery(services: DiscoveryServices, run_id: UUID) -> Discov
         search=services.search,
         search_cost_estimate_usd=services.search_cost_estimate_usd,
     )
-    run_config = run.run_config
-    run_budget = RunBudget(ceiling_usd=run_config.budget_ceiling_usd, spent_usd=spent)
-    signal_sources = list(agent_runs)
-    target = DiscoveryAgent.per_source_target(run_config, len(signal_sources))
-    outcomes = await asyncio.gather(
-        *(
-            runtime.run(
-                DiscoveryAgent(source, target_leads=target),
-                agent_runs[source].id,
-                budget=services.budget,
-                run_budget=run_budget,
-            )
-            for source in signal_sources
-        )
+    return Orchestrator(
+        services.sessions,
+        {StageName.DISCOVERY: DiscoveryStage(services.sessions, runtime, services.budget)},
     )
-    results = dict(zip(signal_sources, outcomes, strict=True))
-    status = _run_status(list(results.values()))
-
-    with services.sessions() as session:
-        stages = StageRepository(session)
-        runs = RunRepository(session)
-        stored_stage = stages.get(stage.id)
-        stored_run = runs.get(run_id)
-        assert stored_stage is not None and stored_run is not None
-        stored_stage.cost_usd = sum(r.cost_usd for r in results.values())
-        stored_stage.ended_at = utcnow()
-        stored_stage.status = (
-            StageStatus.FAILED
-            if all(r.status is AgentRunStatus.FAILED for r in results.values())
-            else StageStatus.COMPLETED
-        )
-        stored_run.status = status
-        stored_run.cost_to_date_usd = max(stored_run.cost_to_date_usd, run_budget.spent_usd)
-        stored_run.updated_at = utcnow()
-        stages.upsert(stored_stage)
-        runs.upsert(stored_run)
-        session.commit()
-
-    return DiscoveryOutcome(
-        run_id=run_id, status=status, results=results, cost_usd=run_budget.spent_usd
-    )
-
-
-def _run_status(results: list[AgentResult]) -> RunStatus:
-    """A discovery-only run stops after discovery: ``completed_partial`` unless it ran
-    out of budget (resumable) or every agent failed."""
-    if any(r.budget_exhausted for r in results):
-        return RunStatus.HALTED_BUDGET
-    if results and all(r.status is AgentRunStatus.FAILED for r in results):
-        return RunStatus.HALTED_ERROR
-    return RunStatus.COMPLETED_PARTIAL
 
 
 def format_leads(sessions: sessionmaker[Session], run_id: UUID) -> str:
@@ -225,7 +65,8 @@ def format_leads(sessions: sessionmaker[Session], run_id: UUID) -> str:
         sources = SourceRepository(session).get_many(source_ids)
 
     lines = [
-        f"Run {run.id}  status={run.status.value}  cost=${run.cost_to_date_usd:.4f}",
+        f"Run {run.id}  status={run.status.value}  cost=${run.cost_to_date_usd:.4f}"
+        + (f"  ({run.status_reason})" if run.status_reason else ""),
         f"{len(leads)} lead(s)",
     ]
     for number, lead in enumerate(sorted(leads, key=_lead_order), start=1):
@@ -251,3 +92,26 @@ def _lead_order(lead: Lead) -> tuple[str, str]:
 
 def _claim_line(claim: Claim) -> str:
     return f"{claim.statement}  ({claim.type.value}, {claim.confidence.value})"
+
+
+def format_agents(sessions: sessionmaker[Session], run_id: UUID) -> str:
+    """One line per agent run of the run: status, output and spend."""
+    with sessions() as session:
+        agent_runs = [
+            agent_run
+            for stage in StageRepository(session).list_for_run(run_id)
+            for agent_run in AgentRunRepository(session).list_for_stage(stage.id)
+        ]
+    lines = []
+    for agent_run in sorted(agent_runs, key=lambda a: a.agent_name):
+        ledger, counts = agent_run.work_ledger, agent_run.output_counts
+        line = (
+            f"{agent_run.agent_name}: {agent_run.status.value}, "
+            f"{counts.get('leads', 0)} lead(s), "
+            f"{len(ledger.done) - len(ledger.failed)} task(s) done, "
+            f"{len(ledger.pending)} pending, ${agent_run.cost_usd:.4f}"
+        )
+        if rejected := counts.get("leads_rejected", 0):
+            line += f", {rejected} unsourced lead(s) dropped"
+        lines.append(line + (f" - {agent_run.error}" if agent_run.error else ""))
+    return "\n".join(lines)

@@ -4,13 +4,17 @@
                  [--target-customer ...] [--leads N] [--budget USD]
                  [--cassette PATH [--cassette-mode replay|record|once]]
     opp resume RUN_ID [--budget USD] [--cassette PATH [--cassette-mode ...]]
+    opp recover [--cassette PATH [--cassette-mode ...]]
+    opp cancel RUN_ID
     opp leads RUN_ID
 
 ``--cassette`` with the default ``replay`` mode runs fully offline from a recording (no
 API keys needed); ``record``/``once`` call the real providers and save what they return.
-Without a cassette, searches go through the SQLite cache. ``discover`` prints the run id
-before it starts, so a run that was interrupted (or halted on budget) can be continued
-with ``resume``: finished sub-tasks are not repeated.
+Without a cassette, searches go through the SQLite cache. Every command drives the
+orchestrator (``opp.orchestration``). ``discover`` prints the run id before it starts, so
+a run that was halted on budget, or cut off, can be continued with ``resume``; finished
+sub-tasks are never repeated. ``recover`` is the startup recovery scan: it continues
+every run that was cut off mid-stage and lists the ones waiting for the operator.
 """
 
 import argparse
@@ -25,24 +29,16 @@ from sqlalchemy.orm import Session, sessionmaker
 from opp.agents.budget import ResearchBudget
 from opp.cassettes.cassette import Cassette, CassetteMode
 from opp.cassettes.providers import CassetteLLMProvider, CassetteSearchProvider
-from opp.cli.discover import (
-    DiscoveryOutcome,
-    DiscoveryServices,
-    ResumeError,
-    create_discovery_run,
-    execute_discovery,
-    format_leads,
-    resume_discovery,
-)
+from opp.cli.discover import DiscoveryServices, build_orchestrator, format_agents, format_leads
 from opp.config.settings import Settings, get_settings
-from opp.db.repositories import RunRepository
 from opp.db.session import create_db_engine, create_session_factory
 from opp.domain.enums import RunStatus, SignalSource
-from opp.domain.run import DiscoveryScope, LeadTargets, RunConfig
+from opp.domain.run import DiscoveryScope, LeadTargets, ResearchRun, RunConfig
 from opp.llm.factory import build_gateway, build_provider
 from opp.llm.types import LLMProvider
 from opp.observability.logging import configure_logging
 from opp.observability.traces import DbTraceSink
+from opp.orchestration.engine import Orchestrator, RunNotFoundError, RunStateError
 from opp.research.cache import CachedSearchProvider
 from opp.research.factory import SearchConfigError, build_search_provider
 from opp.research.search import SearchProvider
@@ -72,6 +68,12 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument("--budget", type=float, help="new run ceiling in USD (a top-up)")
     _cassette_args(resume)
 
+    recover = commands.add_parser("recover", help="continue every run that was cut off")
+    _cassette_args(recover)
+
+    cancel = commands.add_parser("cancel", help="cancel a run, keeping its work")
+    cancel.add_argument("run_id", type=UUID)
+
     leads = commands.add_parser("leads", help="list the leads of a run")
     leads.add_argument("run_id", type=UUID)
     return parser
@@ -97,15 +99,20 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "leads":
             print(format_leads(sessions, args.run_id))
             return 0
-        return _discover(args, settings, sessions)
-    except ResumeError as exc:
+        if args.command == "cancel":
+            # Cancelling needs no providers: the executor honours the flag.
+            run = Orchestrator(sessions, {}).request_cancel(args.run_id)
+            print(f"Run {run.id}: {run.status.value}" + _cancel_note(run))
+            return 0
+        return _execute(args, settings, sessions)
+    except (RunNotFoundError, RunStateError) as exc:
         print(exc, file=sys.stderr)
         return 1
     finally:
         engine.dispose()
 
 
-def _discover(args: argparse.Namespace, settings: Settings, sessions: sessionmaker[Session]) -> int:
+def _execute(args: argparse.Namespace, settings: Settings, sessions: sessionmaker[Session]) -> int:
     cassette = (
         Cassette.open(args.cassette, CassetteMode(args.cassette_mode)) if args.cassette else None
     )
@@ -114,32 +121,44 @@ def _discover(args: argparse.Namespace, settings: Settings, sessions: sessionmak
     except SearchConfigError as exc:
         print(f"Search is not configured: {exc}", file=sys.stderr)
         return 2
-
-    if args.command == "resume":
-        print(f"Resuming run {args.run_id}", file=sys.stderr)
-        work = resume_discovery(services, args.run_id, budget_ceiling_usd=args.budget)
-    else:
-        run_config = RunConfig(
-            discovery_scope=DiscoveryScope(
-                industry=args.industry,
-                geography=args.geography,
-                target_customer=args.target_customer,
-            ),
-            lead_targets=LeadTargets(discovery_n=args.leads),
-            budget_ceiling_usd=args.budget,
-        )
-        signals = [SignalSource(s) for s in args.signal] if args.signal else list(SignalSource)
-        run_id = create_discovery_run(sessions, run_config, signals)
-        print(f"Started run {run_id} (continue it with: opp resume {run_id})", file=sys.stderr)
-        work = execute_discovery(services, run_id)
+    orchestrator = build_orchestrator(services)
     try:
-        outcome = asyncio.run(work)
+        if args.command == "recover":
+            report = asyncio.run(orchestrator.recover())
+            for run in report.resumed:
+                _print_run(sessions, run)
+                print()
+            for run in report.waiting:
+                print(f"Waiting: run {run.id} is {run.status.value}" + _reason(run))
+            print(f"Recovered {len(report.resumed)} run(s); {len(report.waiting)} waiting.")
+            return 0
+        if args.command == "resume":
+            print(f"Resuming run {args.run_id}", file=sys.stderr)
+            run = asyncio.run(orchestrator.resume(args.run_id, budget_ceiling_usd=args.budget))
+        else:
+            run_id = orchestrator.create_run(_run_config(args))
+            print(f"Started run {run_id} (continue it with: opp resume {run_id})", file=sys.stderr)
+            run = asyncio.run(orchestrator.execute(run_id))
     finally:
         if cassette is not None:
             cassette.save()
-
-    _print_outcome(sessions, outcome)
+    _print_run(sessions, run)
     return 0
+
+
+def _run_config(args: argparse.Namespace) -> RunConfig:
+    scope = DiscoveryScope(
+        industry=args.industry,
+        geography=args.geography,
+        target_customer=args.target_customer,
+    )
+    if args.signal:
+        scope.signal_sources = [SignalSource(s) for s in dict.fromkeys(args.signal)]
+    return RunConfig(
+        discovery_scope=scope,
+        lead_targets=LeadTargets(discovery_n=args.leads),
+        budget_ceiling_usd=args.budget,
+    )
 
 
 def _services(
@@ -162,23 +181,28 @@ def _services(
     )
 
 
-def _print_outcome(sessions: sessionmaker[Session], outcome: DiscoveryOutcome) -> None:
-    print(format_leads(sessions, outcome.run_id))
+def _print_run(sessions: sessionmaker[Session], run: ResearchRun) -> None:
+    print(format_leads(sessions, run.id))
     print()
-    for signal, result in outcome.results.items():
-        line = (
-            f"{signal.value}: {result.status.value}, {result.leads_saved} new lead(s), "
-            f"{result.tasks_done} search(es), ${result.cost_usd:.4f}"
-        )
-        if result.leads_rejected:
-            line += f", {result.leads_rejected} unsourced lead(s) dropped"
-        print(line + (f" - {result.error}" if result.error else ""))
-    with sessions() as session:
-        run = RunRepository(session).get(outcome.run_id)
-    ceiling = run.budget_ceiling_usd if run is not None else 0.0
-    print(f"Total cost ${outcome.cost_usd:.4f} of ${ceiling:.2f}. Run id: {outcome.run_id}")
-    if outcome.status is RunStatus.HALTED_BUDGET:
-        print(f"Halted on budget. Continue with: opp resume {outcome.run_id} --budget USD")
+    print(format_agents(sessions, run.id))
+    print(
+        f"Run {run.id}: {run.status.value}{_reason(run)}. "
+        f"Cost ${run.cost_to_date_usd:.4f} of ${run.budget_ceiling_usd:.2f}."
+    )
+    if run.status is RunStatus.HALTED_BUDGET:
+        print(f"Halted on budget. Continue with: opp resume {run.id} --budget USD")
+    elif run.status is RunStatus.HALTED_ERROR:
+        print(f"Halted on an error. Retry with: opp resume {run.id}")
+
+
+def _reason(run: ResearchRun) -> str:
+    return f" ({run.status_reason})" if run.status_reason else ""
+
+
+def _cancel_note(run: ResearchRun) -> str:
+    if run.status is RunStatus.CANCELLED:
+        return ""
+    return " (cancel requested: it stops at its next sub-task)"
 
 
 def _providers(

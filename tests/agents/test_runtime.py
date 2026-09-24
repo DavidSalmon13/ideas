@@ -465,5 +465,5 @@ def test_a_lead_without_a_stored_source_is_dropped_on_commit(
         [lead] = LeadRepository(session).list_for_run(run_id)
     assert lead.title == "real" and lead.source_ids
     stored = load(sessions, agent_run_id)
-    assert stored.output_counts == {"leads": 1, "sources": 1}
+    assert stored.output_counts == {"leads": 1, "leads_rejected": 1, "sources": 1}
     assert "dropped unsourced lead 'ghost'" in stored.summary

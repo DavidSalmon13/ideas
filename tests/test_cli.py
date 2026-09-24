@@ -8,21 +8,27 @@ from sqlalchemy.orm import Session, sessionmaker
 from opp.agents.budget import ResearchBudget
 from opp.cassettes.cassette import Cassette, CassetteMode
 from opp.cassettes.providers import CassetteLLMProvider, CassetteSearchProvider
-from opp.cli.discover import DiscoveryServices, run_discovery
+from opp.cli.discover import DiscoveryServices, build_orchestrator
 from opp.cli.main import main
 from opp.config.settings import get_settings
 from opp.db.base import Base
-from opp.db.repositories import LeadRepository, RunRepository, SourceRepository
+from opp.db.repositories import (
+    LeadRepository,
+    RunRepository,
+    SourceRepository,
+    TraceRepository,
+)
 from opp.db.session import create_db_engine, create_session_factory
 from opp.domain.enums import RunStatus, SignalSource
-from opp.domain.run import DiscoveryScope, LeadTargets, RunConfig
+from opp.domain.run import DiscoveryScope, LeadTargets, ResearchRun, RunConfig
 from opp.llm.factory import build_gateway
 from opp.observability.traces import DbTraceSink
 from tests.agents.fakes import DiscoveryLLM, SnippetSearch
 
 SIGNALS = [SignalSource.UNMET_NEED, SignalSource.INCUMBENT_WEAKNESS]
 CONFIG = RunConfig(
-    discovery_scope=DiscoveryScope(industry="HVAC"), lead_targets=LeadTargets(discovery_n=4)
+    discovery_scope=DiscoveryScope(industry="HVAC", signal_sources=SIGNALS),
+    lead_targets=LeadTargets(discovery_n=4),
 )
 
 
@@ -45,6 +51,11 @@ def services(sessions: sessionmaker[Session], llm: object, search: object) -> Di
     )
 
 
+def discover(svc: DiscoveryServices, config: RunConfig = CONFIG) -> ResearchRun:
+    orchestrator = build_orchestrator(svc)
+    return asyncio.run(orchestrator.execute(orchestrator.create_run(config)))
+
+
 def record_cassette(path: Path, tmp_path: Path) -> None:
     """Record a discovery run from the fakes into a cassette, using a scratch DB."""
     engine = create_db_engine(f"sqlite:///{tmp_path / 'record.db'}")
@@ -53,25 +64,22 @@ def record_cassette(path: Path, tmp_path: Path) -> None:
     with Cassette.open(path, CassetteMode.RECORD) as cassette:
         llm = CassetteLLMProvider(cassette, DiscoveryLLM())
         search = CassetteSearchProvider(cassette, SnippetSearch())
-        asyncio.run(run_discovery(services(scratch, llm, search), CONFIG, SIGNALS))
+        discover(services(scratch, llm, search))
     engine.dispose()
 
 
 def test_run_discovery_persists_sourced_leads(sessions: sessionmaker[Session]) -> None:
-    outcome = asyncio.run(
-        run_discovery(services(sessions, DiscoveryLLM(), SnippetSearch()), CONFIG, SIGNALS)
-    )
+    run = discover(services(sessions, DiscoveryLLM(), SnippetSearch()))
 
-    assert outcome.status is RunStatus.COMPLETED_PARTIAL
-    assert set(outcome.results) == set(SIGNALS)
+    assert run.status is RunStatus.COMPLETED_PARTIAL
+    assert run.status_reason == "the pipeline currently ends before the screening stage"
     with sessions() as session:
-        leads = LeadRepository(session).list_for_run(outcome.run_id)
-        run = RunRepository(session).get(outcome.run_id)
+        leads = LeadRepository(session).list_for_run(run.id)
+        traced = TraceRepository(session).total_cost_for_run(run.id)
     assert len(leads) == 4  # target 4 split over 2 sources
     assert {lead.signal_source for lead in leads} == set(SIGNALS)
     assert all(lead.source_ids for lead in leads)
-    assert run is not None and run.cost_to_date_usd == pytest.approx(outcome.cost_usd)
-    assert outcome.cost_usd > 0
+    assert run.cost_to_date_usd == pytest.approx(traced) and traced > 0
 
 
 def test_cli_discover_replays_a_cassette_offline(
@@ -98,7 +106,7 @@ def test_cli_discover_replays_a_cassette_offline(
     assert "4 lead(s)" in out
     assert "Dispatch for small HVAC shops" in out
     assert "source:   https://www.reddit.com/r/HVAC/comments/" in out
-    assert "unmet_need: completed, 2 new lead(s)" in out
+    assert "discovery:unmet_need: completed, 2 lead(s)" in out
     with sessions() as session:
         runs = RunRepository(session).list_by_status(RunStatus.COMPLETED_PARTIAL)
         [run] = runs
