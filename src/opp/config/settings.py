@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     discovery_max_searches: int = Field(default=8, ge=1)
     discovery_max_llm_calls: int = Field(default=10, ge=1)
 
+    # Recovery scan (plan.md §10): a working run not updated for this long is assumed to
+    # have lost its process and is continued by `opp recover`.
+    recovery_stale_after_minutes: float = Field(default=15.0, ge=0)
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -13,7 +13,6 @@ import pytest
 from sqlalchemy.orm import Session, sessionmaker
 
 from opp.agents.budget import ResearchBudget
-from opp.cli.discover import DiscoveryServices, ResumeError, resume_discovery, run_discovery
 from opp.cli.main import main
 from opp.config.settings import get_settings
 from opp.db.base import Base
@@ -32,13 +31,16 @@ from opp.domain.run import AgentRun, DiscoveryScope, LeadTargets, RunConfig
 from opp.llm.factory import build_gateway
 from opp.llm.types import Completion, CompletionRequest
 from opp.observability.traces import DbTraceSink
+from opp.orchestration.orchestrator import Orchestrator, ResumeError
+from opp.orchestration.stages import StageServices
 from tests.agents.fakes import DiscoveryLLM, SnippetSearch
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SIGNALS = [SignalSource.UNMET_NEED, SignalSource.INCUMBENT_WEAKNESS]
 TARGET = 4  # 2 per signal source; the fake LLM yields one sourced lead per query
 CONFIG = RunConfig(
-    discovery_scope=DiscoveryScope(industry="HVAC"), lead_targets=LeadTargets(discovery_n=TARGET)
+    discovery_scope=DiscoveryScope(industry="HVAC", signal_sources=SIGNALS),
+    lead_targets=LeadTargets(discovery_n=TARGET),
 )
 
 
@@ -66,14 +68,16 @@ def sessions() -> sessionmaker[Session]:
     return create_session_factory(engine)
 
 
-def services(sessions: sessionmaker[Session], llm: object, search: object) -> DiscoveryServices:
+def services(sessions: sessionmaker[Session], llm: object, search: object) -> StageServices:
     sink = DbTraceSink(sessions)
-    return DiscoveryServices(
+    return StageServices(
         sessions=sessions,
         gateway=build_gateway(get_settings(), sink, provider=llm),  # type: ignore[arg-type]
         search=search,  # type: ignore[arg-type]
         sink=sink,
-        budget=ResearchBudget(max_cost_usd=0.75, max_searches=8, max_llm_calls=10, max_fetches=0),
+        discovery_budget=ResearchBudget(
+            max_cost_usd=0.75, max_searches=8, max_llm_calls=10, max_fetches=0
+        ),
         search_cost_estimate_usd=0.008,
     )
 
@@ -108,9 +112,7 @@ def test_resume_after_an_interruption_continues_from_the_ledgers(
     sessions: sessionmaker[Session],
 ) -> None:
     with pytest.raises(Killed):
-        asyncio.run(
-            run_discovery(services(sessions, DyingLLM(3), SnippetSearch()), CONFIG, SIGNALS)
-        )
+        asyncio.run(Orchestrator(services(sessions, DyingLLM(3), SnippetSearch())).start(CONFIG))
 
     run_id = only_run(sessions)
     with sessions() as session:
@@ -124,7 +126,7 @@ def test_resume_after_an_interruption_continues_from_the_ledgers(
     assert 0 < leads_before < TARGET
 
     search = SnippetSearch()
-    outcome = asyncio.run(resume_discovery(services(sessions, DiscoveryLLM(), search), run_id))
+    outcome = asyncio.run(Orchestrator(services(sessions, DiscoveryLLM(), search)).resume(run_id))
 
     assert outcome.run_id == run_id
     assert outcome.status is RunStatus.COMPLETED_PARTIAL
@@ -147,7 +149,7 @@ def test_resume_after_the_process_is_killed(
         import asyncio, os, signal
         from tests.agents.fakes import DiscoveryLLM, SnippetSearch
         from tests.test_resume import CONFIG, SIGNALS, services
-        from opp.cli.discover import run_discovery
+        from opp.orchestration.orchestrator import Orchestrator
         from opp.config.settings import get_settings
         from opp.db.session import create_db_engine, create_session_factory
 
@@ -159,7 +161,7 @@ def test_resume_after_the_process_is_killed(
 
         sessions = create_session_factory(create_db_engine(get_settings().database_url))
         fakes = services(sessions, SigKilledLLM(), SnippetSearch())
-        asyncio.run(run_discovery(fakes, CONFIG, SIGNALS))
+        asyncio.run(Orchestrator(fakes).start(CONFIG))
         """
     )
     env = {
@@ -177,7 +179,7 @@ def test_resume_after_the_process_is_killed(
     assert 0 < leads_before < TARGET
 
     search = SnippetSearch()
-    outcome = asyncio.run(resume_discovery(services(sessions, DiscoveryLLM(), search), run_id))
+    outcome = asyncio.run(Orchestrator(services(sessions, DiscoveryLLM(), search)).resume(run_id))
 
     assert outcome.status is RunStatus.COMPLETED_PARTIAL
     assert assert_every_lead_is_sourced(sessions, run_id) == TARGET
@@ -187,7 +189,7 @@ def test_resume_after_the_process_is_killed(
 def test_a_budget_halted_run_resumes_after_a_top_up(sessions: sessionmaker[Session]) -> None:
     tight = CONFIG.model_copy(update={"budget_ceiling_usd": 0.04})
     halted = asyncio.run(
-        run_discovery(services(sessions, DiscoveryLLM(), SnippetSearch()), tight, SIGNALS)
+        Orchestrator(services(sessions, DiscoveryLLM(), SnippetSearch())).start(tight)
     )
     assert halted.status is RunStatus.HALTED_BUDGET
     leads_before = assert_every_lead_is_sourced(sessions, halted.run_id)
@@ -195,18 +197,14 @@ def test_a_budget_halted_run_resumes_after_a_top_up(sessions: sessionmaker[Sessi
 
     with pytest.raises(ResumeError, match="leaves nothing"):
         asyncio.run(
-            resume_discovery(
-                services(sessions, DiscoveryLLM(), SnippetSearch()),
-                halted.run_id,
-                budget_ceiling_usd=0.01,
+            Orchestrator(services(sessions, DiscoveryLLM(), SnippetSearch())).resume(
+                halted.run_id, budget_ceiling_usd=0.01
             )
         )
 
     outcome = asyncio.run(
-        resume_discovery(
-            services(sessions, DiscoveryLLM(), SnippetSearch()),
-            halted.run_id,
-            budget_ceiling_usd=20.0,
+        Orchestrator(services(sessions, DiscoveryLLM(), SnippetSearch())).resume(
+            halted.run_id, budget_ceiling_usd=20.0
         )
     )
     assert outcome.status is RunStatus.COMPLETED_PARTIAL
@@ -218,12 +216,12 @@ def test_a_budget_halted_run_resumes_after_a_top_up(sessions: sessionmaker[Sessi
 
 def test_finished_or_unknown_runs_are_not_resumed(sessions: sessionmaker[Session]) -> None:
     done = asyncio.run(
-        run_discovery(services(sessions, DiscoveryLLM(), SnippetSearch()), CONFIG, SIGNALS)
+        Orchestrator(services(sessions, DiscoveryLLM(), SnippetSearch())).start(CONFIG)
     )
     for run_id, message in ((done.run_id, "already ended"), (UUID(int=1), "no run")):
         with pytest.raises(ResumeError, match=message):
             asyncio.run(
-                resume_discovery(services(sessions, DiscoveryLLM(), SnippetSearch()), run_id)
+                Orchestrator(services(sessions, DiscoveryLLM(), SnippetSearch())).resume(run_id)
             )
 
 
@@ -233,16 +231,38 @@ def test_cli_resume(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     with pytest.raises(Killed):
-        asyncio.run(
-            run_discovery(services(sessions, DyingLLM(2), SnippetSearch()), CONFIG, SIGNALS)
-        )
+        asyncio.run(Orchestrator(services(sessions, DyingLLM(2), SnippetSearch())).start(CONFIG))
     run_id = only_run(sessions)
     monkeypatch.setattr("opp.cli.main._providers", lambda *_: (DiscoveryLLM(), SnippetSearch()))
 
     assert main(["resume", str(run_id)]) == 0
     out = capsys.readouterr().out
     assert f"{TARGET} lead(s)" in out
-    assert "Run completed_partial." in out
+    assert "Run completed_partial (the screening stage is not available yet" in out
 
     assert main(["resume", str(run_id)]) == 2
     assert "already ended" in capsys.readouterr().err
+
+
+def test_cli_recover_continues_an_interrupted_run(
+    sessions: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(Killed):
+        asyncio.run(Orchestrator(services(sessions, DyingLLM(2), SnippetSearch())).start(CONFIG))
+    run_id = only_run(sessions)
+    monkeypatch.setattr("opp.cli.main._providers", lambda *_: (DiscoveryLLM(), SnippetSearch()))
+    capsys.readouterr()
+
+    # Just interrupted: it may still be running elsewhere, so the default scan skips it.
+    assert main(["recover"]) == 0
+    assert "No interrupted runs to recover." in capsys.readouterr().out
+
+    assert main(["recover", "--all"]) == 0
+    out = capsys.readouterr().out
+    assert f"{TARGET} lead(s)" in out and str(run_id) in out
+    assert assert_every_lead_is_sourced(sessions, run_id) == TARGET
+    with sessions() as session:
+        run = RunRepository(session).get(run_id)
+    assert run is not None and run.status is RunStatus.COMPLETED_PARTIAL

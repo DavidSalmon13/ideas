@@ -32,6 +32,7 @@ uv run opp discover --industry HVAC --leads 20
 uv run opp leads <run-id>            # list a run's leads again later
 uv run opp resume <run-id>           # continue a killed/crashed or budget-halted run
 uv run opp resume <run-id> --budget 25   # ...raising its ceiling (top-up)
+uv run opp recover                   # startup scan: continue runs a dead process left behind
 
 # Offline, from a recorded cassette (no keys needed); --cassette-mode record saves one.
 uv run opp discover --industry HVAC --cassette path/to/cassette.json

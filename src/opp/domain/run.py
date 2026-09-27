@@ -16,6 +16,7 @@ from opp.domain.enums import (
     ModelTier,
     RunMode,
     RunStatus,
+    SignalSource,
     StageName,
     StageStatus,
 )
@@ -36,6 +37,10 @@ class DiscoveryScope(DomainModel):
     geography: str | None = None
     business_shape: BusinessShape | None = None
     target_customer: str | None = None
+    # Which signal sources discovery mines (default: all of them, specs.md §4.2).
+    signal_sources: list[SignalSource] = Field(
+        default_factory=lambda: list(SignalSource), min_length=1
+    )
 
 
 class LeadTargets(DomainModel):
@@ -69,11 +74,21 @@ class RunConfig(DomainModel):
     lead_targets: LeadTargets = Field(default_factory=LeadTargets)
 
 
+class RunTransition(DomainModel):
+    """One state change, kept on the run for diagnostics ("why did this run stop?")."""
+
+    from_status: RunStatus
+    to_status: RunStatus
+    at: datetime = Field(default_factory=utcnow)
+    reason: str = ""
+
+
 class ResearchRun(Entity):
     status: RunStatus = RunStatus.CREATED
     run_config: RunConfig = Field(default_factory=RunConfig)
     cost_to_date_usd: float = Field(default=0.0, ge=0)
     current_stage: StageName | None = None
+    transitions: list[RunTransition] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 

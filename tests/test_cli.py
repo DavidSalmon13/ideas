@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session, sessionmaker
 from opp.agents.budget import ResearchBudget
 from opp.cassettes.cassette import Cassette, CassetteMode
 from opp.cassettes.providers import CassetteLLMProvider, CassetteSearchProvider
-from opp.cli.discover import DiscoveryServices, run_discovery
 from opp.cli.main import main
 from opp.config.settings import get_settings
 from opp.db.base import Base
@@ -18,11 +17,14 @@ from opp.domain.enums import RunStatus, SignalSource
 from opp.domain.run import DiscoveryScope, LeadTargets, RunConfig
 from opp.llm.factory import build_gateway
 from opp.observability.traces import DbTraceSink
+from opp.orchestration.orchestrator import Orchestrator
+from opp.orchestration.stages import StageServices
 from tests.agents.fakes import DiscoveryLLM, SnippetSearch
 
 SIGNALS = [SignalSource.UNMET_NEED, SignalSource.INCUMBENT_WEAKNESS]
 CONFIG = RunConfig(
-    discovery_scope=DiscoveryScope(industry="HVAC"), lead_targets=LeadTargets(discovery_n=4)
+    discovery_scope=DiscoveryScope(industry="HVAC", signal_sources=SIGNALS),
+    lead_targets=LeadTargets(discovery_n=4),
 )
 
 
@@ -33,14 +35,16 @@ def sessions() -> sessionmaker[Session]:
     return create_session_factory(engine)
 
 
-def services(sessions: sessionmaker[Session], llm: object, search: object) -> DiscoveryServices:
+def services(sessions: sessionmaker[Session], llm: object, search: object) -> StageServices:
     sink = DbTraceSink(sessions)
-    return DiscoveryServices(
+    return StageServices(
         sessions=sessions,
         gateway=build_gateway(get_settings(), sink, provider=llm),  # type: ignore[arg-type]
         search=search,  # type: ignore[arg-type]
         sink=sink,
-        budget=ResearchBudget(max_cost_usd=0.75, max_searches=8, max_llm_calls=10, max_fetches=0),
+        discovery_budget=ResearchBudget(
+            max_cost_usd=0.75, max_searches=8, max_llm_calls=10, max_fetches=0
+        ),
         search_cost_estimate_usd=0.008,
     )
 
@@ -53,17 +57,16 @@ def record_cassette(path: Path, tmp_path: Path) -> None:
     with Cassette.open(path, CassetteMode.RECORD) as cassette:
         llm = CassetteLLMProvider(cassette, DiscoveryLLM())
         search = CassetteSearchProvider(cassette, SnippetSearch())
-        asyncio.run(run_discovery(services(scratch, llm, search), CONFIG, SIGNALS))
+        asyncio.run(Orchestrator(services(scratch, llm, search)).start(CONFIG))
     engine.dispose()
 
 
 def test_run_discovery_persists_sourced_leads(sessions: sessionmaker[Session]) -> None:
     outcome = asyncio.run(
-        run_discovery(services(sessions, DiscoveryLLM(), SnippetSearch()), CONFIG, SIGNALS)
+        Orchestrator(services(sessions, DiscoveryLLM(), SnippetSearch())).start(CONFIG)
     )
 
     assert outcome.status is RunStatus.COMPLETED_PARTIAL
-    assert set(outcome.results) == set(SIGNALS)
     with sessions() as session:
         leads = LeadRepository(session).list_for_run(outcome.run_id)
         run = RunRepository(session).get(outcome.run_id)
