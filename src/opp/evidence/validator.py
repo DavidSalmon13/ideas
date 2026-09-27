@@ -130,6 +130,7 @@ def opportunity_sections(opportunity: Opportunity) -> dict[str, list[Claim]]:
         "business_model": list(opportunity.business_model.claims()),
         "economics": list(opportunity.economics.claims()),
         "small_team_feasibility": list(opportunity.small_team_feasibility.claims()),
+        "screening": list(opportunity.screening_claims),
     }
 
 

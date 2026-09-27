@@ -1,6 +1,7 @@
-"""Plain-text views of a discovery run for the CLI: its leads (each with the sources behind
-its claims) and how each signal-source agent did. Running and resuming runs is the
-orchestrator's job (``opp.orchestration``)."""
+"""Plain-text views of a run for the CLI: its leads (each with the sources behind its
+claims and its triage outcome), the shallow-validation shortlist, and how each
+discovery agent did. Running and resuming runs is the orchestrator's job
+(``opp.orchestration``)."""
 
 from uuid import UUID
 
@@ -8,14 +9,16 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from opp.db.repositories import (
     AgentRunRepository,
+    KillRepository,
     LeadRepository,
+    OpportunityRepository,
     RunRepository,
     SourceRepository,
     StageRepository,
 )
-from opp.domain.enums import StageName
+from opp.domain.enums import EvidenceBasis, LeadStatus, StageName
 from opp.domain.evidence import Claim
-from opp.domain.lead import Lead
+from opp.domain.lead import Kill, Lead
 from opp.orchestration.stages import discovery_signal
 
 
@@ -28,6 +31,10 @@ def format_leads(sessions: sessionmaker[Session], run_id: UUID) -> str:
         leads = LeadRepository(session).list_for_run(run_id)
         source_ids = {sid for lead in leads for sid in lead.source_ids}
         sources = SourceRepository(session).get_many(source_ids)
+        kill_repo = KillRepository(session)
+        kills = {
+            lead.id: found[-1] for lead in leads if (found := kill_repo.list_for_subject(lead.id))
+        }
 
     lines = [
         f"Run {run.id}  status={run.status.value}  cost=${run.cost_to_date_usd:.4f}",
@@ -43,6 +50,7 @@ def format_leads(sessions: sessionmaker[Session], run_id: UUID) -> str:
         ]
         if lead.candidate_wedge:
             lines.append(f"   wedge:    {lead.candidate_wedge}")
+        lines.append(f"   triage:   {_triage_line(lead, kills.get(lead.id))}")
         for sid in sorted(lead.source_ids, key=str):
             if sid in sources:
                 source = sources[sid]
@@ -52,6 +60,50 @@ def format_leads(sessions: sessionmaker[Session], run_id: UUID) -> str:
 
 def _lead_order(lead: Lead) -> tuple[str, str]:
     return (lead.signal_source.value, lead.discovered_at.isoformat())
+
+
+def _triage_line(lead: Lead, kill: Kill | None) -> str:
+    if lead.status is LeadStatus.NEW:
+        return "not triaged yet"
+    if kill is not None and lead.status is not LeadStatus.KEPT:
+        gate = f"{kill.failed_gate.value}: " if kill.failed_gate else ""
+        return f"{lead.status.value} ({gate}{kill.reason})"
+    triage = lead.triage
+    if triage is None or triage.cheap_scores is None:
+        return lead.status.value
+    scores = triage.cheap_scores
+    flag = f", generic pattern cleared: {triage.generic_pattern}" if triage.generic_flag else ""
+    return (
+        f"kept, rank score {triage.rank_score:.2f} (sources {scores.source_strength}, "
+        f"specificity {scores.specificity}, small-team fit {scores.smallteam_fit}{flag})"
+    )
+
+
+def format_shortlist(sessions: sessionmaker[Session], run_id: UUID) -> str:
+    """Shallow validation's ranked shortlist: rank 1 is the deep-research candidate."""
+    with sessions() as session:
+        scored = [
+            o for o in OpportunityRepository(session).list(run_id=run_id) if o.shallow is not None
+        ]
+    if not scored:
+        return ""
+    scored.sort(key=lambda o: o.shallow.rank or 0)  # type: ignore[union-attr]
+    lines = [f"Shortlist ({len(scored)} scored; composite ranks only, it is not a verdict)"]
+    for opportunity in scored:
+        shallow = opportunity.shallow
+        assert shallow is not None
+        weak = [
+            s.dimension.value
+            for s in shallow.dimension_scores
+            if s.evidence is EvidenceBasis.INSUFFICIENT
+        ]
+        lines.append(
+            f"  #{shallow.rank} {opportunity.title}  composite {shallow.composite:.2f} "
+            f"[{shallow.weights_ref}]  opportunity {opportunity.id}"
+        )
+        if weak:
+            lines.append(f"      insufficient evidence: {', '.join(weak)}")
+    return "\n".join(lines)
 
 
 def _claim_line(claim: Claim) -> str:

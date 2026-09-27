@@ -177,6 +177,10 @@ class EvidenceStore:
         self._kills.add(kill)
         return kill
 
+    def record_kill(self, kill: Kill) -> Kill:
+        """Log why a lead or opportunity was dropped (intent.md §11.4)."""
+        return self._kills.upsert(kill)
+
     def index_lead(self, lead: Lead, status: DedupStatus = DedupStatus.ACTIVE) -> None:
         """Record a lead in the cross-run dedup index so later runs recognise it."""
         self._dedup.upsert(lead.dedup_hash or lead_dedup_hash(lead), status, lead_id=lead.id)

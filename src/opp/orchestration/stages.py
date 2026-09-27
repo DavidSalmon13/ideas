@@ -8,9 +8,10 @@ instead of starting over.
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol
+from uuid import UUID
 
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -18,9 +19,26 @@ from opp.agents.base import AgentResult
 from opp.agents.budget import ResearchBudget, RunBudget
 from opp.agents.discovery import DiscoveryAgent
 from opp.agents.runtime import AgentRuntime
-from opp.db.repositories import AgentRunRepository
-from opp.domain.enums import AgentRunStatus, ModelTier, SignalSource, StageName
+from opp.agents.shallow_validation import ShallowValidationAgent, lead_task
+from opp.agents.triage import TriageAgent
+from opp.db.repositories import (
+    AgentRunRepository,
+    LeadRepository,
+    OpportunityRepository,
+    SourceRepository,
+)
+from opp.domain.enums import (
+    AgentRunStatus,
+    DedupStatus,
+    LeadStatus,
+    ModelTier,
+    SignalSource,
+    StageName,
+)
+from opp.domain.evidence import Source
+from opp.domain.lead import Lead
 from opp.domain.run import AgentRun, ResearchRun, Stage
+from opp.evidence.store import EvidenceStore
 from opp.llm.gateway import LLMGateway
 from opp.research.search import SearchProvider, TraceSink
 
@@ -35,6 +53,16 @@ class StageServices:
     sink: TraceSink
     search_cost_estimate_usd: float
     discovery_budget: ResearchBudget
+    triage_budget: ResearchBudget = field(
+        default_factory=lambda: ResearchBudget(
+            max_cost_usd=0.75, max_llm_calls=10, max_searches=0, max_fetches=0
+        )
+    )
+    shallow_budget: ResearchBudget = field(
+        default_factory=lambda: ResearchBudget(
+            max_cost_usd=3.0, max_llm_calls=8, max_searches=6, max_fetches=0
+        )
+    )
 
     def runtime(self) -> AgentRuntime:
         return AgentRuntime(
@@ -51,6 +79,8 @@ class StageResult(StrEnum):
     HALTED_BUDGET = "halted_budget"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    # Nothing survived the stage: the run can't go on and ends partial, honestly.
+    NO_CANDIDATES = "no_candidates"
 
 
 @dataclass(frozen=True)
@@ -120,6 +150,164 @@ class DiscoveryStage:
                 repo.add(agent_run)
             session.commit()
         return created
+
+
+class TriageStage:
+    """Dedup (deterministic, against the run and the cross-run index), then the
+    TriageAgent's gates and cheap scores, then index every decided lead so a later run
+    never resurfaces it (specs.md §4.5-§4.6)."""
+
+    name = StageName.SCREENING
+
+    def __init__(self, services: StageServices) -> None:
+        self._services = services
+
+    async def run(self, ctx: StageContext) -> StageOutcome:
+        self._dedup(ctx)
+        leads, sources = _leads_and_sources(self._services.sessions, ctx.run.id)
+        [agent_run] = _agent_runs(self._services.sessions, ctx.stage, [TriageAgent.name])
+        result = await self._services.runtime().run(
+            TriageAgent(leads, sources),
+            agent_run.id,
+            budget=self._services.triage_budget,
+            run_budget=ctx.run_budget,
+            should_stop=ctx.should_stop,
+        )
+        kept = self._index(ctx)
+        outcome = outcome_of([result])
+        if outcome.result is StageResult.COMPLETED and kept == 0:
+            return StageOutcome(
+                StageResult.NO_CANDIDATES, outcome.cost_usd, "no lead survived triage"
+            )
+        return outcome
+
+    def _dedup(self, ctx: StageContext) -> None:
+        stage = ctx.stage.name.value
+        with self._services.sessions() as session:
+            store = EvidenceStore(session)
+            leads = LeadRepository(session).list_for_run(ctx.run.id)
+            by_id = {lead.id: lead for lead in leads}
+            for lead in sorted(leads, key=lambda lead: (lead.discovered_at, str(lead.id))):
+                if lead.status is not LeadStatus.NEW:
+                    continue
+                others = [
+                    other
+                    for other in leads
+                    if other.id != lead.id
+                    and other.status not in (LeadStatus.KILLED, LeadStatus.DUPLICATE)
+                ]
+                match = store.find_duplicate(lead, others)
+                if match is None:
+                    continue
+                other = by_id.get(match.lead_id) if match.lead_id else None
+                if match.indexed_status is not None or other is None:
+                    store.mark_duplicate(
+                        lead, of=match.lead_id or match.opportunity_id, stage=stage
+                    )
+                elif other.status is LeadStatus.KEPT:
+                    store.mark_duplicate(lead, of=other.id, stage=stage)
+                else:
+                    store.resolve_duplicate(lead, other, stage=stage)
+            session.commit()
+
+    def _index(self, ctx: StageContext) -> int:
+        with self._services.sessions() as session:
+            store = EvidenceStore(session)
+            kept = 0
+            for lead in LeadRepository(session).list_for_run(ctx.run.id):
+                if lead.status is LeadStatus.KEPT:
+                    store.index_lead(lead, DedupStatus.ACTIVE)
+                    kept += 1
+                elif lead.status is LeadStatus.KILLED:
+                    store.index_lead(lead, DedupStatus.KILLED)
+            session.commit()
+        return kept
+
+
+class ShallowValidationStage:
+    """Scores the top ``shortlist_n`` triage survivors on the full framework, then ranks
+    them by composite: rank 1 is the candidate for deep research, the rest are the
+    promotable shortlist (specs.md §4.3, §5.3)."""
+
+    name = StageName.SHALLOW_VALIDATION
+
+    def __init__(self, services: StageServices) -> None:
+        self._services = services
+
+    async def run(self, ctx: StageContext) -> StageOutcome:
+        leads, sources = _leads_and_sources(self._services.sessions, ctx.run.id)
+        [agent_run] = _agent_runs(self._services.sessions, ctx.stage, [ShallowValidationAgent.name])
+        candidates = self._candidates(ctx, leads, agent_run)
+        result = await self._services.runtime().run(
+            ShallowValidationAgent(candidates, sources),
+            agent_run.id,
+            budget=self._services.shallow_budget,
+            run_budget=ctx.run_budget,
+            should_stop=ctx.should_stop,
+        )
+        scored = self._rank(ctx)
+        outcome = outcome_of([result])
+        if outcome.result is StageResult.COMPLETED and scored == 0:
+            return StageOutcome(
+                StageResult.NO_CANDIDATES, outcome.cost_usd, "no candidate could be scored"
+            )
+        return outcome
+
+    @staticmethod
+    def _candidates(ctx: StageContext, leads: dict[UUID, Lead], agent_run: AgentRun) -> list[Lead]:
+        """On resume, the candidates the agent run already planned; else the best kept."""
+        planned = [*agent_run.work_ledger.done, *agent_run.work_ledger.pending]
+        if planned:
+            wanted = {lead_task(lead_id): lead_id for lead_id in leads}
+            return [leads[wanted[task]] for task in planned if task in wanted]
+        kept = [lead for lead in leads.values() if lead.status is LeadStatus.KEPT]
+        kept.sort(
+            key=lambda lead: (
+                -(lead.triage.rank_score if lead.triage else 0.0),
+                lead.discovered_at,
+                str(lead.id),
+            )
+        )
+        return kept[: ctx.run.run_config.lead_targets.shortlist_n]
+
+    def _rank(self, ctx: StageContext) -> int:
+        with self._services.sessions() as session:
+            repo = OpportunityRepository(session)
+            scored = [o for o in repo.list(run_id=ctx.run.id) if o.shallow is not None]
+            scored.sort(key=lambda o: (-o.shallow.composite, o.created_at, str(o.id)))  # type: ignore[union-attr]
+            for rank, opportunity in enumerate(scored, start=1):
+                assert opportunity.shallow is not None
+                opportunity.shallow.rank = rank
+                repo.upsert(opportunity)
+            session.commit()
+        return len(scored)
+
+
+def _leads_and_sources(
+    sessions: sessionmaker[Session], run_id: UUID
+) -> tuple[dict[UUID, Lead], dict[UUID, Source]]:
+    with sessions() as session:
+        leads = {lead.id: lead for lead in LeadRepository(session).list_for_run(run_id)}
+        sources = SourceRepository(session).get_many(
+            {sid for lead in leads.values() for sid in lead.source_ids}
+        )
+    return leads, sources
+
+
+def _agent_runs(sessions: sessionmaker[Session], stage: Stage, names: list[str]) -> list[AgentRun]:
+    """The stage's agent runs by name, created on first entry (reused on resume)."""
+    with sessions() as session:
+        repo = AgentRunRepository(session)
+        existing = {ar.agent_name: ar for ar in repo.list_for_stage(stage.id)}
+        runs = []
+        for name in names:
+            if name not in existing:
+                existing[name] = repo.add(
+                    AgentRun(stage_id=stage.id, agent_name=name, model_tier=ModelTier.CHEAP)
+                )
+            runs.append(existing[name])
+        session.commit()
+    return runs
 
 
 def discovery_signal(agent_run: AgentRun) -> SignalSource:

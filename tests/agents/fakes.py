@@ -98,3 +98,83 @@ class DiscoveryLLM:
             input_tokens=900,
             output_tokens=200,
         )
+
+
+_LEAD_NUMBER = re.compile(r"^Lead (\d+):", re.MULTILINE)
+
+
+@dataclass
+class FunnelLLM(DiscoveryLLM):
+    """Answers every funnel agent, dispatching on the requested output model: discovery
+    as ``DiscoveryLLM``; triage passes every lead; shallow validation scores 4 across the
+    board (cited to the lead's first claim) and records one finding from snippet 1."""
+
+    specificity: int = 4
+
+    async def complete(self, request: CompletionRequest) -> Completion:
+        kind = request.output_type.__name__ if request.output_type else ""
+        if kind == "TriageJudgments":
+            self.requests.append(request)
+            prompt = request.messages[-1].content
+            judgments = [
+                {
+                    "lead": int(n),
+                    "named_customer_specific": True,
+                    "specific_pain_documented": True,
+                    "why_now_specific": True,
+                    "why_unsolved": "incumbents sell to large fleets",
+                    "wedge_specific": True,
+                    "specificity": self.specificity,
+                    "smallteam_fit": 4,
+                    "reason": "specific, sourced and small",
+                }
+                for n in _LEAD_NUMBER.findall(prompt)
+            ]
+            return reply(json.dumps({"judgments": judgments}), model=request.model)
+        if kind == "ShallowAssessment":
+            self.requests.append(request)
+            dimensions = [
+                {
+                    "dimension": dim,
+                    "score": 4,
+                    "rationale": f"{dim} looks fine from the evidence",
+                    "evidence": "sourced",
+                    "cites": ["C1"],
+                }
+                for dim in _DIMENSIONS
+            ]
+            findings = [
+                {
+                    "statement": "Owners report losing hours a week to phone dispatch",
+                    "snippets": [1],
+                    "confidence": "medium",
+                    "confidence_reason": "one forum thread",
+                }
+            ]
+            return reply(
+                json.dumps({"dimensions": dimensions, "findings": findings}),
+                model=request.model,
+                input_tokens=3000,
+                output_tokens=1500,
+            )
+        return await super().complete(request)
+
+
+_DIMENSIONS = [
+    "revenue_potential",
+    "gross_margin",
+    "time_to_first_revenue",
+    "upfront_capital",
+    "automation",
+    "small_team_feasibility",
+    "acquisition_difficulty",
+    "competitive_intensity",
+    "defensibility",
+    "why_now",
+    "market_attractiveness",
+    "customer_pain",
+    "willingness_to_pay",
+    "scalability",
+    "evidence_quality",
+    "assumption_risk",
+]

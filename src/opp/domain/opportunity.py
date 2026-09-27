@@ -15,6 +15,8 @@ from opp.domain.base import DomainModel, Entity, utcnow
 from opp.domain.enums import (
     BusinessShape,
     CompetitorType,
+    Dimension,
+    EvidenceBasis,
     ExperimentMethod,
     Level,
     OpportunityStatus,
@@ -172,6 +174,29 @@ class Experiment(Entity):
     priority: int = Field(ge=1, description="1 = run first.")
 
 
+class ProvisionalScore(DomainModel):
+    """One dimension as shallow validation scored it (plan.md §8 ShallowScore)."""
+
+    dimension: Dimension
+    score: int = Field(ge=1, le=5)
+    rationale: str = Field(min_length=1)
+    evidence: EvidenceBasis
+    supporting_claim_ids: list[UUID] = Field(default_factory=list)
+
+
+class ShallowScore(DomainModel):
+    """Shallow validation's rough full-framework score. The composite ranks the shortlist
+    only; ``rank`` 1 is the candidate for deep research."""
+
+    dimension_scores: list[ProvisionalScore]
+    composite: float = Field(ge=1, le=5)
+    weights_ref: str
+    rank: int | None = Field(default=None, ge=1)
+
+    def score_for(self, dimension: Dimension) -> ProvisionalScore | None:
+        return next((s for s in self.dimension_scores if s.dimension is dimension), None)
+
+
 class Opportunity(Entity):
     run_id: UUID
     lead_id: UUID | None = None
@@ -199,6 +224,9 @@ class Opportunity(Entity):
     red_team: RedTeamAnalysis = Field(default_factory=RedTeamAnalysis)
     validation_backlog: list[Experiment] = Field(default_factory=list)
     evaluation: Evaluation | None = None
+    # Shallow validation: the provisional score and the claims it gathered to make it.
+    shallow: ShallowScore | None = None
+    screening_claims: list[Claim] = Field(default_factory=list)
 
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
@@ -216,3 +244,4 @@ class Opportunity(Entity):
             self.small_team_feasibility,
         ):
             yield from _claims_in(part)
+        yield from self.screening_claims

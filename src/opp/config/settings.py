@@ -50,6 +50,14 @@ class Settings(BaseSettings):
     discovery_max_searches: int = Field(default=8, ge=1)
     discovery_max_llm_calls: int = Field(default=10, ge=1)
 
+    # Triage (cheap tier, specs.md §21.2: < $1) and shallow validation (medium tier, ~$3
+    # for the top five: one corroborating search and one scoring call each).
+    triage_max_cost_usd: float = Field(default=0.75, gt=0)
+    triage_max_llm_calls: int = Field(default=10, ge=1)
+    shallow_max_cost_usd: float = Field(default=3.0, gt=0)
+    shallow_max_searches: int = Field(default=6, ge=0)
+    shallow_max_llm_calls: int = Field(default=8, ge=1)
+
     # Recovery scan (plan.md §10): a working run not updated for this long is assumed to
     # have lost its process and is continued by `opp recover`.
     recovery_stale_after_minutes: float = Field(default=15.0, ge=0)

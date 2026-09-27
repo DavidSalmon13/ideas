@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from opp.agents.budget import ResearchBudget
 from opp.cassettes.cassette import Cassette, CassetteMode
 from opp.cassettes.providers import CassetteLLMProvider, CassetteSearchProvider
-from opp.cli.discover import format_leads, format_run_summary
+from opp.cli.discover import format_leads, format_run_summary, format_shortlist
 from opp.config.settings import Settings, get_settings
 from opp.db.session import create_db_engine, create_session_factory
 from opp.domain.enums import SignalSource
@@ -48,7 +48,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-v", "--verbose", action="store_true", help="show log output")
     commands = parser.add_subparsers(dest="command", required=True)
 
-    discover = commands.add_parser("discover", help="run discovery and list the leads")
+    discover = commands.add_parser(
+        "discover",
+        help="start a run: discovery, triage and shallow validation, up to the checkpoint",
+    )
     discover.add_argument(
         "--signal",
         action="append",
@@ -99,6 +102,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "leads":
             print(format_leads(sessions, args.run_id))
+            if shortlist := format_shortlist(sessions, args.run_id):
+                print()
+                print(shortlist)
             return 0
         return _discover(args, settings, sessions)
     finally:
@@ -137,6 +143,9 @@ def _discover(args: argparse.Namespace, settings: Settings, sessions: sessionmak
     for outcome in outcomes:
         print(format_leads(sessions, outcome.run_id))
         print()
+        if shortlist := format_shortlist(sessions, outcome.run_id):
+            print(shortlist)
+            print()
         print(format_run_summary(sessions, outcome.run_id))
     return 0
 
@@ -171,6 +180,18 @@ def _services(
             max_fetches=0,
         ),
         search_cost_estimate_usd=settings.search_cost_per_call_usd,
+        triage_budget=ResearchBudget(
+            max_cost_usd=settings.triage_max_cost_usd,
+            max_llm_calls=settings.triage_max_llm_calls,
+            max_searches=0,
+            max_fetches=0,
+        ),
+        shallow_budget=ResearchBudget(
+            max_cost_usd=settings.shallow_max_cost_usd,
+            max_searches=settings.shallow_max_searches,
+            max_llm_calls=settings.shallow_max_llm_calls,
+            max_fetches=0,
+        ),
     )
 
 

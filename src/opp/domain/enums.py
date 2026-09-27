@@ -107,6 +107,8 @@ class FailedGate(StrEnum):
     TIME_TO_REVENUE = "time_to_revenue"
     FATAL_FLAW = "fatal_flaw"
     DUPLICATE = "duplicate"
+    # A generic-pattern lead ("AI chatbot for X") without the stronger evidence it needs.
+    GENERIC_PATTERN = "generic_pattern"
 
 
 class DedupStatus(StrEnum):
@@ -137,6 +139,14 @@ class Severity(StrEnum):
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
+
+
+class EvidenceBasis(StrEnum):
+    """What a provisional dimension score rests on (specs.md §5.3)."""
+
+    SOURCED = "sourced"
+    INFERRED = "inferred"
+    INSUFFICIENT = "insufficient"
 
 
 class Dimension(StrEnum):

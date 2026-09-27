@@ -17,3 +17,11 @@ Every agent subclasses `Agent` (`base.py`) and is driven by `AgentRuntime` (`run
 
 **Prompt versions** are recorded on each agent run (`prompt_version`); bump it whenever the
 agent's prompts or output models change.
+
+**Agents so far**
+
+- `discovery.py` — one per signal source; snippet search + cheap extraction; `prompts/discovery/v1`.
+- `triage.py` — mechanical specificity gates, generic blocklist, one cheap judgment per batch of 8
+  leads; emits updated leads + kills; `prompts/triage/v1`.
+- `shallow_validation.py` — one search + one medium-tier 16-dimension score per candidate, capped by
+  evidence basis; emits an Opportunity with a `ShallowScore`; `prompts/shallow_validation/v1`.

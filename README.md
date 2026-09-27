@@ -12,7 +12,7 @@ It optimizes for the chain **Evidence → Opportunity → Validation → Economi
 
 ## Status
 
-Design complete; implementation in progress (Phases 0–2 done, Phase 3 under way; the checklist in [`plan.md`](./plan.md) §35 is the live status). The design is captured across three documents (read in order):
+Design complete; implementation in progress (Phases 0–3 done, Phase 4 under way; the checklist in [`plan.md`](./plan.md) §35 is the live status). The design is captured across three documents (read in order):
 
 1. **[`intent.md`](./intent.md)** — product & engineering *intent* (the WHAT and WHY): vision, principles, agent architecture, evaluation framework, constraints. The source of truth.
 2. **[`specs.md`](./specs.md)** — the implementation-ready *product specification* (the detailed HOW-it-behaves): UX, inputs, data models, agent contracts, run lifecycle, failure handling, MVP scope, and testable acceptance criteria.
@@ -27,9 +27,10 @@ uv sync
 uv run alembic upgrade head          # create/upgrade the SQLite database (./data/opp.db)
 cp .env.example .env                 # add OPP_TAVILY_API_KEY and an Anthropic key
 
-# Discovery-only run: mines the signal sources and lists sourced leads.
+# Start a run: discovery -> triage -> shallow validation, stopping at the checkpoint.
+# Prints every lead (with its triage outcome and sources) and the ranked shortlist.
 uv run opp discover --industry HVAC --leads 20
-uv run opp leads <run-id>            # list a run's leads again later
+uv run opp leads <run-id>            # show a run's leads and shortlist again later
 uv run opp resume <run-id>           # continue a killed/crashed or budget-halted run
 uv run opp resume <run-id> --budget 25   # ...raising its ceiling (top-up)
 uv run opp recover                   # startup scan: continue runs a dead process left behind

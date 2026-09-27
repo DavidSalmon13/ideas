@@ -19,7 +19,8 @@ from opp.agents.budget import AgentBudget, CallKind
 from opp.agents.memory import AgentMemory, fold
 from opp.domain.enums import AgentRunStatus, ModelTier, StageName
 from opp.domain.evidence import Claim, Source
-from opp.domain.lead import Lead
+from opp.domain.lead import Kill, Lead
+from opp.domain.opportunity import Opportunity
 from opp.domain.run import RunConfig
 from opp.llm.gateway import CallContext, LLMError, LLMGateway, LLMResult
 from opp.llm.pricing import CHARS_PER_TOKEN
@@ -50,11 +51,14 @@ class SubTaskResult:
     """What one sub-task produced. The runtime validates and commits it atomically.
 
     Sources may be new objects: the runtime stores each once (deduped by canonical URL)
-    and rewrites the claims' source references to the stored ids."""
+    and rewrites the claims' source references to the stored ids. Leads and opportunities
+    go through the Evidence Store (validated, fingerprinted); kills are logged as given."""
 
     sources: list[Source] = field(default_factory=list)
     claims: list[Claim] = field(default_factory=list)
     leads: list[Lead] = field(default_factory=list)
+    opportunities: list[Opportunity] = field(default_factory=list)
+    kills: list[Kill] = field(default_factory=list)
     # Loose claims are filed under this opportunity when set.
     opportunity_id: UUID | None = None
     note: str = ""

@@ -185,7 +185,13 @@ class OpportunityRepository(DocRepository[Opportunity, models.OpportunityRow]):
             lead_id=obj.lead_id,
             status=obj.status.value,
             business_shape=obj.business_shape.value,
-            composite=evaluation.composite if evaluation else None,
+            composite=(
+                evaluation.composite
+                if evaluation
+                else obj.shallow.composite
+                if obj.shallow
+                else None
+            ),
             verdict=evaluation.verdict.value if evaluation else None,
             created_at=obj.created_at,
             updated_at=obj.updated_at,

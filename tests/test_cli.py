@@ -19,7 +19,8 @@ from opp.llm.factory import build_gateway
 from opp.observability.traces import DbTraceSink
 from opp.orchestration.orchestrator import Orchestrator
 from opp.orchestration.stages import StageServices
-from tests.agents.fakes import DiscoveryLLM, SnippetSearch
+from tests.agents.fakes import DiscoveryLLM, FunnelLLM, SnippetSearch
+from tests.test_resume import discovery_only
 
 SIGNALS = [SignalSource.UNMET_NEED, SignalSource.INCUMBENT_WEAKNESS]
 CONFIG = RunConfig(
@@ -55,7 +56,7 @@ def record_cassette(path: Path, tmp_path: Path) -> None:
     Base.metadata.create_all(engine)
     scratch = create_session_factory(engine)
     with Cassette.open(path, CassetteMode.RECORD) as cassette:
-        llm = CassetteLLMProvider(cassette, DiscoveryLLM())
+        llm = CassetteLLMProvider(cassette, FunnelLLM())
         search = CassetteSearchProvider(cassette, SnippetSearch())
         asyncio.run(Orchestrator(services(scratch, llm, search)).start(CONFIG))
     engine.dispose()
@@ -63,7 +64,7 @@ def record_cassette(path: Path, tmp_path: Path) -> None:
 
 def test_run_discovery_persists_sourced_leads(sessions: sessionmaker[Session]) -> None:
     outcome = asyncio.run(
-        Orchestrator(services(sessions, DiscoveryLLM(), SnippetSearch())).start(CONFIG)
+        discovery_only(services(sessions, DiscoveryLLM(), SnippetSearch())).start(CONFIG)
     )
 
     assert outcome.status is RunStatus.COMPLETED_PARTIAL
@@ -101,7 +102,7 @@ def test_cli_discover_replays_a_cassette_offline(
     assert "source:   https://www.reddit.com/r/HVAC/comments/" in out
     assert "unmet_need: completed, 2 lead(s)" in out
     with sessions() as session:
-        runs = RunRepository(session).list_by_status(RunStatus.COMPLETED_PARTIAL)
+        runs = RunRepository(session).list_by_status(RunStatus.AWAITING_CHECKPOINT)
         [run] = runs
         leads = LeadRepository(session).list_for_run(run.id)
         sources = SourceRepository(session).get_many({s for lead in leads for s in lead.source_ids})

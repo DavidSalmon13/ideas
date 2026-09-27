@@ -29,10 +29,12 @@ from opp.domain.enums import CheckpointMode, RunStatus, StageName, StageStatus
 from opp.domain.run import ResearchRun, RunConfig, RunTransition, Stage
 from opp.orchestration.stages import (
     DiscoveryStage,
+    ShallowValidationStage,
     StageContext,
     StageHandler,
     StageResult,
     StageServices,
+    TriageStage,
 )
 from opp.orchestration.state_machine import (
     HALTED,
@@ -49,6 +51,7 @@ _ON_RESULT = {
     StageResult.HALTED_BUDGET: RunStatus.HALTED_BUDGET,
     StageResult.FAILED: RunStatus.HALTED_ERROR,
     StageResult.CANCELLED: RunStatus.CANCELLED,
+    StageResult.NO_CANDIDATES: RunStatus.COMPLETED_PARTIAL,
 }
 
 
@@ -65,7 +68,11 @@ class RunOutcome:
 
 def default_handlers(services: StageServices) -> dict[StageName, StageHandler]:
     """The stages implemented so far; the funnel ends where this map does."""
-    return {StageName.DISCOVERY: DiscoveryStage(services)}
+    return {
+        StageName.DISCOVERY: DiscoveryStage(services),
+        StageName.SCREENING: TriageStage(services),
+        StageName.SHALLOW_VALIDATION: ShallowValidationStage(services),
+    }
 
 
 class Orchestrator:
@@ -101,6 +108,8 @@ class Orchestrator:
                 raise ResumeError(f"no run {run_id}")
             if run.is_terminal:
                 raise ResumeError(f"run {run_id} already ended ({run.status.value})")
+            if run.status is RunStatus.AWAITING_CHECKPOINT:
+                raise ResumeError(f"run {run_id} is waiting at the checkpoint for a decision")
             spent = _spent(session, run)
             if budget_ceiling_usd is not None:
                 if budget_ceiling_usd <= spent:

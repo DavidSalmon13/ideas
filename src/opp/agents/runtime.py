@@ -41,6 +41,7 @@ from opp.domain.base import utcnow
 from opp.domain.enums import AgentRunStatus, StageName
 from opp.domain.evidence import Claim
 from opp.domain.lead import Lead
+from opp.domain.opportunity import Opportunity
 from opp.domain.run import AgentRun, RunConfig
 from opp.evidence.store import EvidenceStore, UnsourcedLeadError
 from opp.evidence.validator import IssueKind
@@ -247,6 +248,11 @@ class AgentRuntime:
                 saved_leads += 1
                 tally.leads += 1
                 tally.demoted += len(report.claim_ids(IssueKind.DEMOTED_UNSOURCED))
+            for opportunity in output.opportunities:
+                _, report = store.save_opportunity(_remap_opportunity(opportunity, ids))
+                tally.demoted += len(report.claim_ids(IssueKind.DEMOTED_UNSOURCED))
+            for kill in output.kills:
+                store.record_kill(kill)
             if output.claims:
                 claims, report = store.save_claims(
                     [_remap(claim, ids) for claim in output.claims],
@@ -257,6 +263,8 @@ class AgentRuntime:
             for key, amount in (
                 ("leads", saved_leads),
                 ("claims", len(output.claims)),
+                ("opportunities", len(output.opportunities)),
+                ("kills", len(output.kills)),
                 ("sources", len(ids)),
             ):
                 if amount:
@@ -348,3 +356,10 @@ def _remap_lead(lead: Lead, ids: dict[UUID, UUID]) -> Lead:
             "why_now": _remap(lead.why_now, ids),
         }
     )
+
+
+def _remap_opportunity(opportunity: Opportunity, ids: dict[UUID, UUID]) -> Opportunity:
+    copy = opportunity.model_copy(deep=True)
+    for claim in copy.claims():  # the copy's own claim objects: safe to rewrite in place
+        claim.source_ids = [ids.get(s, s) for s in claim.source_ids]
+    return copy
