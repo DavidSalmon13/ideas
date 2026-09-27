@@ -3,7 +3,7 @@ import json
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, ClassVar
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import BaseModel
@@ -19,13 +19,24 @@ from opp.db.base import Base
 from opp.db.repositories import (
     AgentRunRepository,
     ClaimRepository,
+    LeadRepository,
     RunRepository,
     StageRepository,
     TraceRepository,
 )
 from opp.db.session import create_db_engine, create_session_factory
-from opp.domain.enums import AgentRunStatus, ClaimType, Level, ModelTier, SourceType, StageName
+from opp.domain.enums import (
+    AgentRunStatus,
+    BusinessShape,
+    ClaimType,
+    Level,
+    ModelTier,
+    SignalSource,
+    SourceType,
+    StageName,
+)
 from opp.domain.evidence import Claim, Source
+from opp.domain.lead import Lead
 from opp.domain.run import AgentRun, ResearchRun, Stage
 from opp.llm.fake import FakeLLMProvider, reply
 from opp.llm.gateway import LLMGateway, ModelRoute, ModelRouting
@@ -362,6 +373,45 @@ def test_unsourced_facts_are_demoted_on_commit(sessions: sessionmaker[Session]) 
             [row.id for row in session.scalars(select(models.ClaimRow))]
         )
     assert sorted(c.type.value for c in claims.values()) == ["assumption", "fact", "fact"]
+
+
+def test_a_lead_without_a_source_is_dropped_but_the_subtask_commits(
+    sessions: sessionmaker[Session],
+) -> None:
+    class LeadAgent(ToyAgent):
+        async def run_subtask(self, task: str, ctx: AgentContext) -> SubTaskResult:
+            out = await super().run_subtask(task, ctx)
+            sourced = out.claims[0]
+            unsourced = sourced.model_copy(update={"id": uuid4(), "source_ids": []})
+
+            def lead(title: str, claim: Claim) -> Lead:
+                return Lead(
+                    run_id=ctx.run_id,
+                    title=title,
+                    business_shape=BusinessShape.SAAS,
+                    named_customer=claim.model_copy(update={"id": uuid4()}),
+                    specific_pain=claim.model_copy(update={"id": uuid4()}),
+                    why_now=claim.model_copy(update={"id": uuid4()}),
+                    signal_source=SignalSource.UNMET_NEED,
+                )
+
+            out.leads = [lead(f"sourced {task}", sourced), lead(f"unsourced {task}", unsourced)]
+            return out
+
+    run_id, agent_run_id = make_agent_run(sessions)
+    rt, _, _ = runtime(sessions, points(3))
+
+    result = go(rt, LeadAgent(), agent_run_id)
+
+    assert result.status is AgentRunStatus.COMPLETED
+    assert (result.leads_saved, result.leads_rejected) == (3, 3)
+    with sessions() as session:
+        leads = LeadRepository(session).list_for_run(run_id)
+    assert sorted(lead.title for lead in leads) == ["sourced q1", "sourced q2", "sourced q3"]
+    assert all(lead.source_ids for lead in leads)
+    stored = load(sessions, agent_run_id)
+    assert stored.output_counts["leads"] == 3  # refused leads don't count toward targets
+    assert "dropped an unsourced lead" in stored.summary
 
 
 def test_follow_up_tasks_are_added_once(sessions: sessionmaker[Session]) -> None:

@@ -42,7 +42,7 @@ from opp.domain.enums import AgentRunStatus, StageName
 from opp.domain.evidence import Claim
 from opp.domain.lead import Lead
 from opp.domain.run import AgentRun, RunConfig
-from opp.evidence.store import EvidenceStore
+from opp.evidence.store import EvidenceStore, UnsourcedLeadError
 from opp.evidence.validator import IssueKind
 from opp.llm.gateway import CallContext, LLMError, LLMGateway
 from opp.research.fetcher import FetchError, PageFetcher
@@ -70,6 +70,7 @@ class _Tally:
     compactions: int = 0
     claims: int = 0
     leads: int = 0
+    rejected_leads: int = 0
     demoted: int = 0
 
 
@@ -233,8 +234,17 @@ class AgentRuntime:
             store = EvidenceStore(session)
             ids = {source.id: store.add_source(source).id for source in output.sources}
             counts = agent_run.output_counts
+            saved_leads = 0
             for lead in output.leads:
-                _, report = store.save_lead(_remap_lead(lead, ids))
+                try:
+                    _, report = store.save_lead(_remap_lead(lead, ids))
+                except UnsourcedLeadError as exc:
+                    # No lead without a source: drop it, keep the rest of the sub-task.
+                    tally.rejected_leads += 1
+                    ctx.memory.remember(f"{task}: dropped an unsourced lead")
+                    log.warning("lead_rejected", agent=agent_run.agent_name, error=str(exc))
+                    continue
+                saved_leads += 1
                 tally.leads += 1
                 tally.demoted += len(report.claim_ids(IssueKind.DEMOTED_UNSOURCED))
             if output.claims:
@@ -245,7 +255,7 @@ class AgentRuntime:
                 tally.claims += len(claims)
                 tally.demoted += len(report.claim_ids(IssueKind.DEMOTED_UNSOURCED))
             for key, amount in (
-                ("leads", len(output.leads)),
+                ("leads", saved_leads),
                 ("claims", len(output.claims)),
                 ("sources", len(ids)),
             ):
@@ -318,6 +328,7 @@ class AgentRuntime:
             compactions=tally.compactions,
             claims_saved=tally.claims,
             leads_saved=tally.leads,
+            leads_rejected=tally.rejected_leads,
             demoted_claims=tally.demoted,
             error=agent_run.error,
         )

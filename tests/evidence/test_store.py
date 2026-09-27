@@ -1,5 +1,6 @@
 from uuid import UUID
 
+import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -15,7 +16,7 @@ from opp.db.repositories import (
 from opp.domain.enums import BusinessShape, ClaimType, DedupStatus, FailedGate, LeadStatus, Level
 from opp.domain.opportunity import Customer, Market, Opportunity, Problem
 from opp.domain.run import ResearchRun
-from opp.evidence.store import EvidenceStore
+from opp.evidence.store import EvidenceStore, UnsourcedLeadError
 from tests.evidence.conftest import make_claim, make_lead, make_source
 
 
@@ -65,6 +66,20 @@ def test_unsourced_fact_on_a_lead_is_stored_as_assumption(session: Session) -> N
     assert _count(session, models.ClaimSourceRow) == 2  # customer + pain cite the source
 
 
+def test_a_lead_without_a_stored_source_is_refused(session: Session) -> None:
+    store = EvidenceStore(session)
+    run_id = _run(session)
+    unsaved = make_source()  # cited but never stored: the ref dangles
+
+    for lead in (make_lead(run_id=run_id), make_lead(run_id=run_id, sources=[unsaved])):
+        with pytest.raises(UnsourcedLeadError):
+            store.save_lead(lead)
+    session.commit()
+
+    assert _count(session, models.LeadRow) == 0
+    assert _count(session, models.ClaimRow) == 0
+
+
 def test_saving_a_lead_twice_does_not_duplicate_claims(session: Session) -> None:
     store = EvidenceStore(session)
     source = store.add_source(make_source())
@@ -83,11 +98,19 @@ def test_saving_a_lead_twice_does_not_duplicate_claims(session: Session) -> None
 def test_find_duplicate_within_candidates(session: Session) -> None:
     store = EvidenceStore(session)
     run_id = _run(session)
-    a, _ = store.save_lead(make_lead(run_id=run_id))
+    src = [store.add_source(make_source())]
+    a, _ = store.save_lead(make_lead(run_id=run_id, sources=src))
     b, _ = store.save_lead(
-        make_lead("independent HVAC contractors", "scheduling technicians by phone", run_id=run_id)
+        make_lead(
+            "independent HVAC contractors",
+            "scheduling technicians by phone",
+            run_id=run_id,
+            sources=src,
+        )
     )
-    unrelated, _ = store.save_lead(make_lead("dental clinics", "claim denials", run_id=run_id))
+    unrelated, _ = store.save_lead(
+        make_lead("dental clinics", "claim denials", run_id=run_id, sources=src)
+    )
 
     match = store.find_duplicate(b, [a, b, unrelated])
     assert match is not None and match.lead_id == a.id
@@ -100,7 +123,8 @@ def test_find_duplicate_within_candidates(session: Session) -> None:
 
 def test_killed_lead_is_never_resurfaced_in_a_later_run(session: Session) -> None:
     store = EvidenceStore(session)
-    old, _ = store.save_lead(make_lead(run_id=_run(session)))
+    source = store.add_source(make_source())
+    old, _ = store.save_lead(make_lead(run_id=_run(session), sources=[source]))
     store.index_lead(old, DedupStatus.KILLED)
     session.commit()
 
@@ -119,7 +143,10 @@ def test_resolve_duplicate_keeps_stronger_evidence_and_logs_a_kill(session: Sess
     store = EvidenceStore(session)
     run_id = _run(session)
     strong_source = store.add_source(make_source(credibility_tier=Level.HIGH))
-    weak, _ = store.save_lead(make_lead(run_id=run_id))
+    weak_source = store.add_source(
+        make_source("https://forum.example.com/t/1", credibility_tier=Level.LOW)
+    )
+    weak, _ = store.save_lead(make_lead(run_id=run_id, sources=[weak_source]))
     strong, _ = store.save_lead(make_lead(run_id=run_id, sources=[strong_source]))
 
     pair = store.resolve_duplicate(weak, strong, stage="screening")

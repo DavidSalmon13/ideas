@@ -40,6 +40,11 @@ from opp.evidence.validator import (
 )
 
 
+class UnsourcedLeadError(ValueError):
+    """A lead none of whose claims rests on a stored source. Such a lead is never saved
+    (plan.md §24 Phase 3: no lead without a source)."""
+
+
 @dataclass(frozen=True)
 class DuplicateMatch:
     """Why a lead is a duplicate: it hit the cross-run index, or resembles a given lead."""
@@ -116,8 +121,13 @@ class EvidenceStore:
     # --- leads ---------------------------------------------------------------------------
 
     def save_lead(self, lead: Lead) -> tuple[Lead, ValidationReport]:
-        """Validate a lead's claims, fingerprint it and store it with its claims."""
+        """Validate a lead's claims, fingerprint it and store it with its claims.
+
+        Raises ``UnsourcedLeadError`` (writing nothing) when, after validation, no claim
+        cites a stored source."""
         lead, report = validate_lead(lead, self.sources_for(lead.claims()))
+        if not lead.source_ids:
+            raise UnsourcedLeadError(f"lead {lead.id} ({lead.title!r}) cites no stored source")
         lead.dedup_hash = lead_dedup_hash(lead)
         self._leads.upsert(lead)
         for claim in lead.claims():
