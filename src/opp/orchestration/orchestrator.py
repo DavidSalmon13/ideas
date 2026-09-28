@@ -73,6 +73,7 @@ from opp.orchestration.state_machine import (
     check_transition,
     next_status,
 )
+from opp.reporting.final import build_final_report
 from opp.reporting.partial import build_partial_report
 
 log = structlog.get_logger(__name__)
@@ -399,6 +400,8 @@ class Orchestrator:
         log.info("run_transition", run_id=str(run_id), to=target.value, reason=reason)
         if target in PARTIAL_STOPS:
             self._emit_partial(run_id)
+        elif target is RunStatus.COMPLETED:
+            self._emit_final(run_id)
         return run
 
     def _emit_partial(self, run_id: UUID) -> None:
@@ -412,6 +415,15 @@ class Orchestrator:
             ReportRepository(session).add(report)
             session.commit()
         log.info("partial_report", run_id=str(run_id), report_id=str(report.id))
+
+    def _emit_final(self, run_id: UUID) -> None:
+        """Store the completed run's 1-page brief + full dossier (specs.md §18)."""
+        with self._sessions() as session:
+            run = _get(session, run_id)
+            report = build_final_report(session, run)
+            ReportRepository(session).add(report)
+            session.commit()
+        log.info("final_report", run_id=str(run_id), report_id=str(report.id))
 
     def _outcome(self, run_id: UUID) -> RunOutcome:
         with self._sessions() as session:

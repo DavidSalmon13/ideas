@@ -3,7 +3,6 @@ claims and its triage outcome), the shallow-validation shortlist, the checkpoint
 the budget meter, the latest report, and how each discovery agent did. Running and
 resuming runs is the orchestrator's job (``opp.orchestration``)."""
 
-import json
 from uuid import UUID
 
 from sqlalchemy.orm import Session, sessionmaker
@@ -25,6 +24,7 @@ from opp.domain.opportunity import ShallowScore
 from opp.observability.cost import cost_ledger
 from opp.orchestration.budget import StageMinimums, minimum_to_finish
 from opp.orchestration.stages import discovery_signal
+from opp.reporting.final import render_report
 from opp.reporting.partial import render_brief
 
 
@@ -258,12 +258,10 @@ def format_cost(sessions: sessionmaker[Session], run_id: UUID, minimums: StageMi
 
 
 def format_report(sessions: sessionmaker[Session], run_id: UUID) -> str:
-    """The run's latest report: the incomplete-run brief, or the stored brief as JSON."""
+    """The run's latest report: the incomplete-run brief, or the completed decision brief."""
     with sessions() as session:
         reports = ReportRepository(session).list_for_run(run_id)
     if not reports:
         return ""
     report = max(reports, key=lambda r: r.created_at)
-    if report.incomplete:
-        return render_brief(report)
-    return json.dumps(report.brief, indent=2)
+    return render_brief(report) if report.incomplete else render_report(report)
