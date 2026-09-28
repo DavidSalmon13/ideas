@@ -10,6 +10,10 @@ produced it. Return:
   Do not add facts the claims don't contain.
 - contradictions: each a set of two or more claim numbers that genuinely conflict, with a
   one-line description of the conflict.
+- blocking_gap: leave empty unless a decision-critical axis was left essentially
+  unresearched (for example, no real evidence at all on the customer or the competition).
+  When that happens, name the single most important missing thing in one line; it earns one
+  more targeted research pass. Do not use it for minor gaps.
 
 Rules:
 - Surface conflicts; never smooth them over or pick a winner silently. A figure one

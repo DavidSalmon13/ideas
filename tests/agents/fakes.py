@@ -169,7 +169,10 @@ _CLAIM_LINE = re.compile(r"^\[(\d+)\] \(", re.MULTILINE)
 class DeepFunnelLLM(FunnelLLM):
     """Extends the funnel LLM with the deep-research specialists and synthesis: each
     specialist question yields two sourced findings (snippets 1 and 2), and synthesis
-    reports one contradiction between the first two claims it is shown."""
+    reports one contradiction between the first two claims it is shown. Set ``blocking_gap``
+    to make synthesis always flag a gap (which drives a kickback)."""
+
+    blocking_gap: str = ""
 
     async def complete(self, request: CompletionRequest) -> Completion:
         kind = request.output_type.__name__ if request.output_type else ""
@@ -215,6 +218,7 @@ class DeepFunnelLLM(FunnelLLM):
                     {
                         "summary": "Real, sourced pain among small HVAC shops with a why-now.",
                         "contradictions": contradictions,
+                        "blocking_gap": self.blocking_gap,
                     }
                 ),
                 model=request.model,

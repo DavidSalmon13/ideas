@@ -63,6 +63,7 @@ from opp.orchestration.stages import (
 )
 from opp.orchestration.state_machine import (
     HALTED,
+    KICKBACK,
     STAGE_FOR_STATUS,
     STATUS_FOR_STAGE,
     WORKING,
@@ -327,7 +328,9 @@ class Orchestrator:
                 "stage_ended", run_id=str(run_id), stage=stage_name.value, result=outcome.result
             )
             checkpoint = None
-            if outcome.result is StageResult.COMPLETED:
+            if outcome.result is StageResult.KICKBACK:
+                target, reason = self._kickback_target(run, stage_name, outcome.detail)
+            elif outcome.result is StageResult.COMPLETED:
                 target = next_status(run.status, _mode(run))
                 reason = f"{stage_name.value} completed"
                 if target is RunStatus.DEEP_RESEARCH and run.checkpoint is None:
@@ -339,6 +342,27 @@ class Orchestrator:
 
         self._cancelled.discard(run_id)
         return RunOutcome(run_id=run.id, status=run.status, cost_usd=run.cost_to_date_usd)
+
+    def _kickback_target(
+        self, run: ResearchRun, stage_name: StageName, detail: str
+    ) -> tuple[RunStatus, str]:
+        """Where a stage that raised a blocking gap goes: back one stage for a second pass,
+        or — once that stage has already been re-run — on to the next stage (the ≤1/stage
+        cap, plan.md §9, intent.md §19.1). A stage's work stands either way."""
+        target = KICKBACK.get(run.status)
+        if target is not None and not self._kicked_back(run.id, STAGE_FOR_STATUS[target]):
+            return target, f"{stage_name.value}: kickback to {target.value} — {detail}"
+        return (
+            next_status(run.status, _mode(run)),
+            f"{stage_name.value} completed (kickback cap reached: {detail})",
+        )
+
+    def _kicked_back(self, run_id: UUID, target: StageName) -> bool:
+        """Whether ``target`` has already been re-entered by a kickback: a kickback is the
+        only thing that gives a completed stage a second attempt."""
+        with self._sessions() as session:
+            stages = StageRepository(session).list_for_run(run_id)
+        return sum(1 for s in stages if s.name is target) >= 2
 
     def _auto_select(self, run_id: UUID) -> CheckpointDecision | None:
         """Autonomous mode's stand-in for the checkpoint: the top-ranked candidate."""
@@ -409,7 +433,13 @@ class Orchestrator:
             if attempts and attempts[-1].status is not StageStatus.COMPLETED:
                 stage = attempts[-1]
             else:
-                stage = Stage(run_id=run.id, name=name, attempt=len(attempts) + 1)
+                # A new attempt after a completed one only happens via a kickback re-entry.
+                stage = Stage(
+                    run_id=run.id,
+                    name=name,
+                    attempt=len(attempts) + 1,
+                    kickback_count=1 if attempts else 0,
+                )
             stage.status = StageStatus.RUNNING
             stage.started_at = stage.started_at or utcnow()
             stage.ended_at = None
@@ -421,7 +451,8 @@ class Orchestrator:
         self, stage: Stage, result: StageResult, cost_usd: float, run_budget: RunBudget
     ) -> None:
         stage.cost_usd = cost_usd
-        if result is StageResult.COMPLETED:
+        if result in (StageResult.COMPLETED, StageResult.KICKBACK):
+            # A kickback stage did its work; it just asks the prior stage to run once more.
             stage.status, stage.ended_at = StageStatus.COMPLETED, utcnow()
         elif result is StageResult.FAILED:
             stage.status, stage.ended_at = StageStatus.FAILED, utcnow()

@@ -198,10 +198,49 @@ def test_synthesis_links_contradictions_and_attaches_its_picture(
     assert stored.synthesis.axes_covered == [AXES[0].agent_name, AXES[3].agent_name]
     [contradiction] = stored.synthesis.contradictions
     assert set(contradiction.claim_ids) == {claims[0].id, claims[1].id}
+    # The claims were assembled into the opportunity's per-axis research lists.
+    assert [c.id for c in stored.research.customer] == [claims[0].id]
+    assert [c.id for c in stored.research.feasibility] == [claims[1].id]
+    assert not stored.research.market and not stored.research.competition
     # The conflict is recorded on the claims themselves, symmetrically, and capped at medium.
     a, b = linked[claims[0].id], linked[claims[1].id]
     assert b.id in a.conflict_ids and a.id in b.conflict_ids
     assert a.confidence is Level.MEDIUM and b.confidence is Level.MEDIUM
+    # The assembled research claims are the ones carrying the conflict links.
+    assert stored.research.customer[0].conflict_ids == [claims[1].id]
+
+
+def test_synthesis_queues_unknowns_as_experiments(sessions: sessionmaker[Session]) -> None:
+    run, opportunity = seed_opportunity(sessions)
+    unknown = Claim(
+        statement="Could not determine: how the segment reaches decisions",
+        type=ClaimType.UNKNOWN,
+        confidence=Level.LOW,
+        confidence_reason="the snippets showed nothing usable",
+        agent=AXES[0].agent_name,
+        stage=StageName.DEEP_RESEARCH.value,
+    )
+    with sessions() as session:
+        EvidenceStore(session).save_claims([unknown], opportunity_id=opportunity.id)
+        session.commit()
+
+    run_agent(
+        sessions,
+        run,
+        StageName.SYNTHESIS,
+        SynthesisAgent.name,
+        lambda: SynthesisAgent(opportunity, [unknown], {}),
+        None,
+        ResearchBudget(max_cost_usd=1.0, max_searches=0, max_llm_calls=3),
+    )
+
+    with sessions() as session:
+        stored = OpportunityRepository(session).get(opportunity.id)
+    assert stored is not None
+    [experiment] = stored.validation_backlog
+    assert experiment.assumption_claim_id == unknown.id
+    assert "how the segment reaches decisions" in experiment.hypothesis
+    assert experiment.priority == 1
 
 
 def test_synthesis_with_no_claims_still_records_a_picture(

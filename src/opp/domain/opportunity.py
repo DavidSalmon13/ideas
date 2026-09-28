@@ -189,6 +189,22 @@ class ResearchSynthesis(DomainModel):
     axes_covered: list[str] = Field(
         default_factory=list, description="Which specialists produced claims."
     )
+    # A specific research gap Synthesis judged blocking; drives one bounded kickback to
+    # deep research (intent.md §19.1). Empty when the research is good enough to proceed.
+    blocking_gap: str = ""
+
+
+class Research(ClaimGroup):
+    """The assembled deep-research claims, grouped by specialist axis (intent.md §11.3).
+
+    The specialists file their claims loose (keyed by the opportunity) while they run in
+    parallel; Synthesis folds them into these lists, so the opportunity document carries
+    its own research once assembled."""
+
+    customer: list[Claim] = Field(default_factory=list)
+    competition: list[Claim] = Field(default_factory=list)
+    market: list[Claim] = Field(default_factory=list)
+    feasibility: list[Claim] = Field(default_factory=list)
 
 
 class ProvisionalScore(DomainModel):
@@ -244,8 +260,9 @@ class Opportunity(Entity):
     # Shallow validation: the provisional score and the claims it gathered to make it.
     shallow: ShallowScore | None = None
     screening_claims: list[Claim] = Field(default_factory=list)
-    # Synthesis's consolidated picture of the deep-research claims (which are stored loose,
-    # keyed by this opportunity, so parallel specialists never clobber each other).
+    # Deep research: the specialists' claims, assembled by Synthesis into per-axis lists.
+    research: Research = Field(default_factory=Research)
+    # Synthesis's consolidated picture over that research (summary, contradictions, gap).
     synthesis: ResearchSynthesis | None = None
 
     created_at: datetime = Field(default_factory=utcnow)
@@ -262,6 +279,7 @@ class Opportunity(Entity):
             self.business_model,
             self.economics,
             self.small_team_feasibility,
+            self.research,
         ):
             yield from _claims_in(part)
         yield from self.screening_claims

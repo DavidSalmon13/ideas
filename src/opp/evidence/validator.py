@@ -131,6 +131,10 @@ def opportunity_sections(opportunity: Opportunity) -> dict[str, list[Claim]]:
         "economics": list(opportunity.economics.claims()),
         "small_team_feasibility": list(opportunity.small_team_feasibility.claims()),
         "screening": list(opportunity.screening_claims),
+        "research_customer": list(opportunity.research.customer),
+        "research_competition": list(opportunity.research.competition),
+        "research_market": list(opportunity.research.market),
+        "research_feasibility": list(opportunity.research.feasibility),
     }
 
 

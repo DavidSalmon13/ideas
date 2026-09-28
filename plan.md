@@ -623,7 +623,7 @@ This is the earliest point the product demonstrates its core value: a grounded, 
 
 **Phase 5 — Deep research**
 - [x] 4 specialists (parallel) + Synthesis + contradictions
-- [ ] Kickback (≤1/stage) + full Opportunity assembly
+- [x] Kickback (≤1/stage) + full Opportunity assembly
 
 **Phase 6 — Strategy + evaluation + report**
 - [ ] Strategy (unit economics, small-team, validation backlog)

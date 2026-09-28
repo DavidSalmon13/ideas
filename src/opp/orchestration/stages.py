@@ -101,6 +101,9 @@ class StageResult(StrEnum):
     CANCELLED = "cancelled"
     # Nothing survived the stage: the run can't go on and ends partial, honestly.
     NO_CANDIDATES = "no_candidates"
+    # The stage did its work but found a blocking gap: send the opportunity back one stage
+    # for one more targeted pass (the orchestrator enforces the ≤1/stage cap).
+    KICKBACK = "kickback"
 
 
 @dataclass(frozen=True)
@@ -362,7 +365,19 @@ class SynthesisStage:
             run_budget=ctx.run_budget,
             should_stop=ctx.should_stop,
         )
-        return outcome_of([result])
+        outcome = outcome_of([result])
+        if outcome.result is StageResult.COMPLETED:
+            gap = self._blocking_gap(opportunity.id)
+            if gap:
+                return StageOutcome(StageResult.KICKBACK, outcome.cost_usd, gap)
+        return outcome
+
+    def _blocking_gap(self, opportunity_id: UUID) -> str:
+        with self._services.sessions() as session:
+            opportunity = OpportunityRepository(session).get(opportunity_id)
+        if opportunity is None or opportunity.synthesis is None:
+            return ""
+        return opportunity.synthesis.blocking_gap
 
 
 def _selected_opportunity(sessions: sessionmaker[Session], run: ResearchRun) -> Opportunity | None:

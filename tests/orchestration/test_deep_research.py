@@ -43,12 +43,12 @@ def sessions(tmp_path: Path) -> Iterator[sessionmaker[Session]]:
     engine.dispose()
 
 
-def orchestrator(sessions: sessionmaker[Session]) -> Orchestrator:
+def orchestrator(sessions: sessionmaker[Session], llm: DeepFunnelLLM | None = None) -> Orchestrator:
     sink = DbTraceSink(sessions)
     return Orchestrator(
         StageServices(
             sessions=sessions,
-            gateway=LLMGateway(DeepFunnelLLM(), ROUTING, sink),
+            gateway=LLMGateway(llm or DeepFunnelLLM(), ROUTING, sink),
             search=SnippetSearch(),
             sink=sink,
             search_cost_estimate_usd=0.008,
@@ -122,6 +122,12 @@ def test_deep_research_and_synthesis_run_the_selected_opportunity(
     first, second = contradiction.claim_ids[0], contradiction.claim_ids[1]
     assert second in by_id[first].conflict_ids and first in by_id[second].conflict_ids
 
+    # The claims were assembled into the opportunity's per-axis research lists.
+    research = opportunity.research
+    assert research.customer and research.competition and research.market and research.feasibility
+    assembled = {c.id for axis in AXES for c in getattr(research, axis.key)}
+    assert assembled == {c.id for c in claims}
+
 
 def test_deep_research_without_a_selection_ends_honestly(
     sessions: sessionmaker[Session],
@@ -147,3 +153,35 @@ def test_deep_research_without_a_selection_ends_honestly(
     with sessions() as session:
         run = RunRepository(session).get(run_id)
     assert run is not None and "no opportunity was selected" in run.transitions[-1].reason
+
+
+def test_a_blocking_gap_kicks_back_to_deep_research_once(
+    sessions: sessionmaker[Session],
+) -> None:
+    """Synthesis raising a blocking gap sends the opportunity back to deep research for one
+    more pass; the second synthesis still flags the gap but the ≤1/stage cap lets the run go
+    on rather than looping."""
+    run_id = seeded_run(sessions, [lead()], RunConfig(checkpoint_mode=CheckpointMode.AUTONOMOUS))
+    orch = orchestrator(sessions, DeepFunnelLLM(blocking_gap="no real competition evidence"))
+
+    outcome = asyncio.run(orch.advance(run_id))
+
+    assert outcome.status is RunStatus.COMPLETED_PARTIAL
+    with sessions() as session:
+        run = RunRepository(session).get(run_id)
+        assert run is not None
+        stages = StageRepository(session).list_for_run(run_id)
+    to_status = [t.to_status for t in run.transitions]
+    reasons = [t.reason for t in run.transitions]
+
+    # Deep research ran twice (one kickback), synthesis ran twice; the run then went on.
+    assert sum(1 for s in stages if s.name is StageName.DEEP_RESEARCH) == 2
+    assert to_status.count(RunStatus.DEEP_RESEARCH) == 2
+    assert to_status.count(RunStatus.SYNTHESIZING) == 2
+    assert any("kickback to deep_research — no real competition evidence" in r for r in reasons)
+    # The cap held: the second synthesis proceeded instead of kicking back again.
+    assert any("kickback cap reached" in r for r in reasons)
+    assert "strategy stage is not available yet" in run.transitions[-1].reason
+    # The re-entered deep-research stage is marked as a kickback.
+    deep = [s for s in stages if s.name is StageName.DEEP_RESEARCH]
+    assert sorted(s.kickback_count for s in deep) == [0, 1]
