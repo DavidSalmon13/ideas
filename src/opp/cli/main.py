@@ -1,7 +1,7 @@
 """The ``opp`` command line (plan.md §3 ``cli/``: early slices + ops).
 
     opp discover [--signal SOURCE ...] [--industry ...] [--geography ...]
-                 [--target-customer ...] [--leads N] [--budget USD]
+                 [--target-customer ...] [--leads N] [--budget USD] [--autonomous]
                  [--cassette PATH [--cassette-mode replay|record|once]]
     opp resume RUN_ID [--budget USD] [--cassette PATH [--cassette-mode ...]]
     opp recover [--all]
@@ -18,11 +18,12 @@ discovery run that was interrupted (process killed, crash) or halted on budget, 
 agents' work ledgers; ``--budget`` raises its ceiling. ``recover`` is the startup
 recovery scan: it continues every run a dead process left mid-stage.
 
-A run in the default mandatory mode stops at the checkpoint with a ranked shortlist.
+A run in the default mandatory mode stops at the checkpoint with a ranked shortlist;
+``--autonomous`` instead runs the whole funnel to a verdict and prints the decision brief.
 ``checkpoint`` without a decision shows it; ``--approve`` sends the top candidate to deep
 research, ``--pick`` a runner-up (``--reason`` required), ``--veto`` rejects them all
-(``--reason`` required). ``cost`` is the budget meter; ``report`` prints the latest
-report (an incomplete-run brief when the run stopped short).
+(``--reason`` required). ``cost`` is the budget meter; ``report`` prints the latest report
+(the decision brief for a completed run, an incomplete-run brief when it stopped short).
 """
 
 import argparse
@@ -47,7 +48,7 @@ from opp.cli.discover import (
 )
 from opp.config.settings import Settings, get_settings
 from opp.db.session import create_db_engine, create_session_factory
-from opp.domain.enums import CheckpointAction, SignalSource
+from opp.domain.enums import CheckpointAction, CheckpointMode, RunStatus, SignalSource
 from opp.domain.run import DiscoveryScope, LeadTargets, RunConfig
 from opp.llm.factory import build_gateway, build_provider
 from opp.llm.types import LLMProvider
@@ -81,6 +82,11 @@ def build_parser() -> argparse.ArgumentParser:
     discover.add_argument("--target-customer")
     discover.add_argument("--leads", type=int, default=30, help="lead target across sources")
     discover.add_argument("--budget", type=float, default=20.0, help="run ceiling in USD")
+    discover.add_argument(
+        "--autonomous",
+        action="store_true",
+        help="run the whole funnel to a verdict without stopping at the checkpoint",
+    )
     _cassette_args(discover)
 
     resume = commands.add_parser("resume", help="continue an interrupted or halted run")
@@ -216,6 +222,9 @@ def _discover(args: argparse.Namespace, settings: Settings, sessions: sessionmak
             print(shortlist)
             print()
         print(format_run_summary(sessions, outcome.run_id, settings.stage_minimums_usd))
+        if outcome.status is RunStatus.COMPLETED:
+            print()
+            print(format_report(sessions, outcome.run_id))
     return 0
 
 
@@ -229,6 +238,11 @@ def _run_config(args: argparse.Namespace) -> RunConfig:
         ),
         lead_targets=LeadTargets(discovery_n=args.leads),
         budget_ceiling_usd=args.budget,
+        checkpoint_mode=(
+            CheckpointMode.AUTONOMOUS
+            if getattr(args, "autonomous", False)
+            else CheckpointMode.MANDATORY
+        ),
     )
 
 

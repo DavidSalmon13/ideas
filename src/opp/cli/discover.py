@@ -165,7 +165,9 @@ def format_run_summary(
         lines.append(f"Waiting at the checkpoint. Review and decide with: opp checkpoint {run.id}")
     elif not run.is_terminal:
         lines.append(f"Continue it with: opp resume {run.id}")
-    if has_report and run.status is not RunStatus.COMPLETED:
+    if has_report and run.status is RunStatus.COMPLETED:
+        lines.append(f"Decision brief + dossier: opp report {run.id}")
+    elif has_report:
         lines.append(f"Incomplete-run report: opp report {run.id}")
     return "\n".join(lines)
 

@@ -11,15 +11,20 @@ from opp.cassettes.providers import CassetteLLMProvider, CassetteSearchProvider
 from opp.cli.main import main
 from opp.config.settings import get_settings
 from opp.db.base import Base
-from opp.db.repositories import LeadRepository, RunRepository, SourceRepository
+from opp.db.repositories import (
+    LeadRepository,
+    ReportRepository,
+    RunRepository,
+    SourceRepository,
+)
 from opp.db.session import create_db_engine, create_session_factory
-from opp.domain.enums import RunStatus, SignalSource
+from opp.domain.enums import CheckpointMode, RunStatus, SignalSource
 from opp.domain.run import DiscoveryScope, LeadTargets, RunConfig
 from opp.llm.factory import build_gateway
 from opp.observability.traces import DbTraceSink
 from opp.orchestration.orchestrator import Orchestrator
 from opp.orchestration.stages import StageServices
-from tests.agents.fakes import DiscoveryLLM, FunnelLLM, SnippetSearch
+from tests.agents.fakes import DiscoveryLLM, FullFunnelLLM, FunnelLLM, SnippetSearch
 from tests.test_resume import discovery_only
 
 SIGNALS = [SignalSource.UNMET_NEED, SignalSource.INCUMBENT_WEAKNESS]
@@ -112,6 +117,35 @@ def test_cli_discover_replays_a_cassette_offline(
     # And the leads can be listed again later.
     assert main(["leads", str(run.id)]) == 0
     assert "Dispatch for small HVAC shops" in capsys.readouterr().out
+
+
+def test_autonomous_flag_runs_the_whole_funnel() -> None:
+    from opp.cli.main import _run_config, build_parser
+
+    args = build_parser().parse_args(["discover", "--autonomous"])
+    assert _run_config(args).checkpoint_mode is CheckpointMode.AUTONOMOUS
+    default = build_parser().parse_args(["discover"])
+    assert _run_config(default).checkpoint_mode is CheckpointMode.MANDATORY
+
+
+def test_cli_report_renders_the_completed_decision_brief(
+    sessions: sessionmaker[Session], capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A completed autonomous run's ``opp report`` prints the decision brief (Milestone M1)."""
+    config = CONFIG.model_copy(update={"checkpoint_mode": CheckpointMode.AUTONOMOUS})
+    outcome = asyncio.run(
+        Orchestrator(services(sessions, FullFunnelLLM(), SnippetSearch())).start(config)
+    )
+    assert outcome.status is RunStatus.COMPLETED
+
+    assert main(["report", str(outcome.run_id)]) == 0
+    brief = capsys.readouterr().out
+    for heading in ("## Verdict:", "## Economics", "## Cheapest next experiment"):
+        assert heading in brief
+    with sessions() as session:
+        [report] = ReportRepository(session).list_for_run(outcome.run_id)
+    assert report.incomplete is False
+    assert len(report.dossier["evaluation"]["dimension_scores"]) == 16
 
 
 def test_cli_refuses_to_run_without_tables(capsys: pytest.CaptureFixture[str]) -> None:
