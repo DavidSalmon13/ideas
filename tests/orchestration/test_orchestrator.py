@@ -15,6 +15,7 @@ from opp.db.repositories import RunRepository, StageRepository
 from opp.db.session import create_db_engine, create_session_factory
 from opp.domain.enums import CheckpointMode, RunStatus, StageName, StageStatus
 from opp.domain.run import ResearchRun, RunConfig, Stage
+from opp.orchestration.budget import BudgetPolicy
 from opp.orchestration.orchestrator import Orchestrator, ResumeError
 from opp.orchestration.stages import (
     StageContext,
@@ -78,7 +79,7 @@ def orchestrator(sessions: sessionmaker[Session], *handlers: FakeStage) -> Orche
         discovery_budget=ResearchBudget(),
     )
     table: dict[StageName, StageHandler] = {h.name: h for h in handlers}
-    return Orchestrator(services, table)
+    return Orchestrator(services, table, policy=BudgetPolicy.unconstrained())
 
 
 def all_stages(**overrides: FakeStage) -> list[FakeStage]:

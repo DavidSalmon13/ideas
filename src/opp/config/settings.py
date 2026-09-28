@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     discovery_max_searches: int = Field(default=8, ge=1)
     discovery_max_llm_calls: int = Field(default=10, ge=1)
 
+    # Run ceilings above this need explicit confirmation (specs.md §2.3, §21.1).
+    budget_max_ceiling_usd: float = Field(default=20.0, gt=0)
+
     # Triage (cheap tier, specs.md §21.2: < $1) and shallow validation (medium tier, ~$3
     # for the top five: one corroborating search and one scoring call each).
     triage_max_cost_usd: float = Field(default=0.75, gt=0)

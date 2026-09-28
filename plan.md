@@ -619,7 +619,7 @@ This is the earliest point the product demonstrates its core value: a grounded, 
 **Phase 4 — Funnel orchestration**
 - [x] Orchestrator state machine + recovery scan
 - [x] Triage (specificity gates + generic blocklist) + ShallowValidation
-- [ ] Checkpoint (CLI) + budget meter + pre-checks + HALTED_BUDGET partials
+- [x] Checkpoint (CLI) + budget meter + pre-checks + HALTED_BUDGET partials
 
 **Phase 5 — Deep research**
 - [ ] 4 specialists (parallel) + Synthesis + contradictions

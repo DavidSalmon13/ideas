@@ -31,6 +31,7 @@ from opp.domain.run import AgentRun, DiscoveryScope, LeadTargets, RunConfig
 from opp.llm.factory import build_gateway
 from opp.llm.types import Completion, CompletionRequest
 from opp.observability.traces import DbTraceSink
+from opp.orchestration.budget import BudgetPolicy
 from opp.orchestration.orchestrator import Orchestrator, ResumeError
 from opp.orchestration.stages import DiscoveryStage, StageServices
 from tests.agents.fakes import DiscoveryLLM, FunnelLLM, SnippetSearch
@@ -84,7 +85,11 @@ def services(sessions: sessionmaker[Session], llm: object, search: object) -> St
 
 def discovery_only(services: StageServices) -> Orchestrator:
     """These tests are about discovery resuming; later stages are tested elsewhere."""
-    return Orchestrator(services, {StageName.DISCOVERY: DiscoveryStage(services)})
+    return Orchestrator(
+        services,
+        {StageName.DISCOVERY: DiscoveryStage(services)},
+        policy=BudgetPolicy.unconstrained(),  # the agents' own budget guards are under test
+    )
 
 
 def only_run(sessions: sessionmaker[Session]) -> UUID:

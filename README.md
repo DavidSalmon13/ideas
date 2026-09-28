@@ -29,8 +29,14 @@ cp .env.example .env                 # add OPP_TAVILY_API_KEY and an Anthropic k
 
 # Start a run: discovery -> triage -> shallow validation, stopping at the checkpoint.
 # Prints every lead (with its triage outcome and sources) and the ranked shortlist.
-uv run opp discover --industry HVAC --leads 20
+uv run opp discover --industry HVAC --leads 20   # --autonomous skips the checkpoint
 uv run opp leads <run-id>            # show a run's leads and shortlist again later
+uv run opp checkpoint <run-id>       # the ranked shortlist + budget left, then decide:
+uv run opp checkpoint <run-id> --approve              # top candidate goes deep
+uv run opp checkpoint <run-id> --pick <opp-id> --reason "..."
+uv run opp checkpoint <run-id> --veto --reason "..."  # next candidate is proposed
+uv run opp cost <run-id>             # cost meter: spend by stage (vs target), agent, kind
+uv run opp report <run-id>           # latest report (INCOMPLETE partial if it stopped early)
 uv run opp resume <run-id>           # continue a killed/crashed or budget-halted run
 uv run opp resume <run-id> --budget 25   # ...raising its ceiling (top-up)
 uv run opp recover                   # startup scan: continue runs a dead process left behind

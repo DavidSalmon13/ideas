@@ -10,6 +10,7 @@ from opp.domain.enums import (
     TERMINAL_RUN_STATUSES,
     AgentRunStatus,
     BusinessShape,
+    CheckpointAction,
     CheckpointMode,
     Dimension,
     Level,
@@ -83,12 +84,25 @@ class RunTransition(DomainModel):
     reason: str = ""
 
 
+class CheckpointDecision(DomainModel):
+    """One decision at the checkpoint. Vetoes and overrides carry the operator's one-line
+    reason (specs.md §2.7), kept for preference learning."""
+
+    action: CheckpointAction
+    opportunity_id: UUID
+    reason: str = ""
+    at: datetime = Field(default_factory=utcnow)
+
+
 class ResearchRun(Entity):
     status: RunStatus = RunStatus.CREATED
     run_config: RunConfig = Field(default_factory=RunConfig)
     cost_to_date_usd: float = Field(default=0.0, ge=0)
     current_stage: StageName | None = None
     transitions: list[RunTransition] = Field(default_factory=list)
+    checkpoint_decisions: list[CheckpointDecision] = Field(default_factory=list)
+    # The one opportunity chosen for deep research (strictly one in MVP, plan.md §0).
+    selected_opportunity_id: UUID | None = None
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 

@@ -12,14 +12,24 @@ from opp.db.repositories import (
     KillRepository,
     LeadRepository,
     OpportunityRepository,
+    ReportRepository,
     RunRepository,
     SourceRepository,
     StageRepository,
 )
-from opp.domain.enums import EvidenceBasis, LeadStatus, StageName
+from opp.domain.enums import (
+    EvidenceBasis,
+    LeadStatus,
+    OpportunityStatus,
+    RunStatus,
+    StageName,
+)
 from opp.domain.evidence import Claim
 from opp.domain.lead import Kill, Lead
+from opp.observability.costs import cost_meter
+from opp.orchestration.budget import BudgetPolicy
 from opp.orchestration.stages import discovery_signal
+from opp.reporting.partial import render_markdown
 
 
 def format_leads(sessions: sessionmaker[Session], run_id: UUID) -> str:
@@ -144,3 +154,84 @@ def format_run_summary(sessions: sessionmaker[Session], run_id: UUID) -> str:
     if not run.is_terminal:
         lines.append(f"Continue it with: opp resume {run.id}")
     return "\n".join(lines)
+
+
+def format_checkpoint(sessions: sessionmaker[Session], run_id: UUID, policy: BudgetPolicy) -> str:
+    """What the operator decides on: the open shortlist, best first, with one-line
+    rationales, and whether the money left covers deep research (specs.md §2.7)."""
+    with sessions() as session:
+        run = RunRepository(session).get(run_id)
+        if run is None:
+            return f"No run {run_id}."
+        meter = cost_meter(session, run_id)
+        open_ = [
+            o
+            for o in OpportunityRepository(session).list(run_id=run_id)
+            if o.shallow is not None and o.status is not OpportunityStatus.DISCARDED
+        ]
+        leads = LeadRepository(session).get_many(o.lead_id for o in open_ if o.lead_id)
+    open_.sort(key=lambda o: o.shallow.rank or 0)  # type: ignore[union-attr]
+
+    if run.status is not RunStatus.AWAITING_CHECKPOINT:
+        return f"Run {run.id} is not at the checkpoint ({run.status.value})."
+    lines = ["Checkpoint: which opportunity gets deep research?", ""]
+    for number, opportunity in enumerate(open_, start=1):
+        shallow = opportunity.shallow
+        assert shallow is not None
+        best = sorted(shallow.dimension_scores, key=lambda s: -s.score)[:3]
+        lead = leads.get(opportunity.lead_id) if opportunity.lead_id else None
+        rationale = lead.triage.reason if lead and lead.triage else ""
+        proposed = "  <- proposed" if number == 1 else ""
+        lines += [
+            f"#{shallow.rank} {opportunity.title}  composite {shallow.composite:.2f}{proposed}",
+            f"    id: {opportunity.id}",
+            "    strongest: " + ", ".join(f"{s.dimension.value} {s.score}" for s in best),
+        ]
+        if rationale:
+            lines.append(f"    why: {rationale}")
+    deep = policy.minimum(StageName.DEEP_RESEARCH)
+    affordable = "enough" if meter.remaining_usd >= deep else "NOT enough (top up on resume)"
+    lines += [
+        "",
+        f"Budget: ${meter.spent_usd:.4f} spent of ${meter.ceiling_usd:.2f}; "
+        f"${meter.remaining_usd:.2f} left, {affordable} for deep research (needs ${deep:.2f}).",
+        f"Decide: opp checkpoint {run.id} --approve | --pick OPP_ID --reason '...' "
+        "| --veto [OPP_ID] --reason '...'",
+    ]
+    return "\n".join(lines)
+
+
+def format_cost(sessions: sessionmaker[Session], run_id: UUID, policy: BudgetPolicy) -> str:
+    """The cost meter: spend by stage against its target allocation, by agent and kind."""
+    with sessions() as session:
+        if RunRepository(session).get(run_id) is None:
+            return f"No run {run_id}."
+        meter = cost_meter(session, run_id)
+    lines = [
+        f"Run {run_id}: ${meter.spent_usd:.4f} of ${meter.ceiling_usd:.2f} "
+        f"({meter.used_fraction:.0%}), ${meter.remaining_usd:.2f} left; "
+        f"{meter.calls} call(s), {meter.failed_calls} failed",
+        "",
+        "By stage (spent / target):",
+    ]
+    for stage in StageName:
+        if stage in meter.by_stage or policy.target(stage):
+            lines.append(
+                f"  {stage.value:<20} ${meter.by_stage.get(stage, 0.0):.4f} / "
+                f"${policy.target(stage):.2f}"
+            )
+    lines.append("By agent:")
+    lines += [f"  {name:<32} ${cost:.4f}" for name, cost in sorted(meter.by_agent.items())]
+    lines.append("By kind:")
+    lines += [f"  {kind.value:<8} ${cost:.4f}" for kind, cost in sorted(meter.by_kind.items())]
+    return "\n".join(lines)
+
+
+def format_report(sessions: sessionmaker[Session], run_id: UUID) -> str:
+    """The run's latest report (partial reports are marked INCOMPLETE)."""
+    with sessions() as session:
+        reports = ReportRepository(session).list_for_run(run_id)
+    if not reports:
+        return f"No report for run {run_id} yet."
+    latest = max(reports, key=lambda r: r.created_at)
+    return render_markdown(latest)
