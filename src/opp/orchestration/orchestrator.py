@@ -58,6 +58,7 @@ from opp.orchestration.stages import (
     StageHandler,
     StageResult,
     StageServices,
+    StrategyStage,
     SynthesisStage,
     TriageStage,
 )
@@ -116,6 +117,7 @@ def default_handlers(services: StageServices) -> dict[StageName, StageHandler]:
         StageName.SHALLOW_VALIDATION: ShallowValidationStage(services),
         StageName.DEEP_RESEARCH: DeepResearchStage(services),
         StageName.SYNTHESIS: SynthesisStage(services),
+        StageName.STRATEGY: StrategyStage(services),
     }
 
 

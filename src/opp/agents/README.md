@@ -25,3 +25,11 @@ agent's prompts or output models change.
   leads; emits updated leads + kills; `prompts/triage/v1`.
 - `shallow_validation.py` — one search + one medium-tier 16-dimension score per candidate, capped by
   evidence basis; emits an Opportunity with a `ShallowScore`; `prompts/shallow_validation/v1`.
+- `specialists/` — four medium-tier deep-research agents (customer, competition, market, feasibility),
+  one snippet search + extraction per axis question; file loose axis claims; `prompts/deep_research/v1`.
+- `synthesis.py` — one medium-tier call merging the specialists' claims, linking contradictions and
+  assembling the opportunity's per-axis research; `prompts/synthesis/v1`.
+- `strategy.py` — one premium-tier call turning the synthesized research into a concrete plan (MVP,
+  business model, pricing, distribution, scenario unit-economics with labeled assumptions, small-team
+  feasibility, validation backlog); reasons over the research, adds no sources, so every figure is an
+  estimate/assumption; `prompts/strategy/v1`.

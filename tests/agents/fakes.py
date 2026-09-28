@@ -228,6 +228,101 @@ class DeepFunnelLLM(FunnelLLM):
         return await super().complete(request)
 
 
+@dataclass
+class StrategyFunnelLLM(DeepFunnelLLM):
+    """Extends the deep funnel with the strategy step: a full execution plan with two
+    assumptions (one load-bearing), three scenarios, a small-team answer and one experiment
+    that tests the non-load-bearing assumption (so the load-bearing one gets a fallback
+    experiment)."""
+
+    async def complete(self, request: CompletionRequest) -> Completion:
+        kind = request.output_type.__name__ if request.output_type else ""
+        if kind == "StrategyPlan":
+            self.requests.append(request)
+            plan = {
+                "what_to_build": "A phone-to-calendar dispatch board for small HVAC shops",
+                "value_prop": "Stop losing hours a week to phone dispatch",
+                "wedge": "a single-page dispatch board",
+                "mvp_scope": "one shared board, SMS reminders",
+                "must_haves": ["shared board", "SMS reminders"],
+                "explicitly_excluded": ["accounting", "payroll"],
+                "revenue_model": "flat monthly subscription",
+                "pricing": "$99 per shop per month",
+                "pricing_value_usd": 99.0,
+                "pricing_unit": "USD/month",
+                "distribution_channels": ["HVAC forums", "trade shows"],
+                "acquisition_strategy": "post in the forums where the pain was found",
+                "unit_model": "price x paying shops - tool costs",
+                "gross_margin_pct": 85.0,
+                "time_to_revenue_months": 1.5,
+                "capital_required_usd": 500.0,
+                "conservative": {
+                    "monthly_revenue_usd": 990.0,
+                    "monthly_profit_usd": 800.0,
+                    "summary": "ten shops",
+                    "assumption_refs": [1],
+                },
+                "base": {
+                    "monthly_revenue_usd": 2970.0,
+                    "monthly_profit_usd": 2500.0,
+                    "summary": "thirty shops",
+                    "assumption_refs": [1, 2],
+                },
+                "upside": {
+                    "monthly_revenue_usd": 9900.0,
+                    "monthly_profit_usd": 8500.0,
+                    "summary": "a hundred shops",
+                    "assumption_refs": [1],
+                },
+                "assumptions": [
+                    {
+                        "ref": 1,
+                        "statement": "Small HVAC shops will pay $99/month for a dispatch board",
+                        "confidence": "low",
+                        "confidence_reason": "no pricing evidence found yet",
+                        "load_bearing": True,
+                    },
+                    {
+                        "ref": 2,
+                        "statement": "Owners can be reached through HVAC forums",
+                        "confidence": "medium",
+                        "confidence_reason": "the pain was found in those forums",
+                        "load_bearing": False,
+                    },
+                ],
+                "small_team": {
+                    "min_viable_team": 1,
+                    "required_skills": ["web development"],
+                    "founder_responsibilities": ["build", "support"],
+                    "automation_map": ["SMS reminders"],
+                    "ai_automation_map": [],
+                    "outsourcing_map": [],
+                    "blockers_to_solo": [],
+                    "workload_assessment": "a few hours a week once built",
+                    "can_one_person_start": True,
+                    "can_one_person_start_reason": "it is a small web app",
+                    "can_1_3_operate": True,
+                    "can_1_3_operate_reason": "low support burden",
+                },
+                "validation_backlog": [
+                    {
+                        "hypothesis": "Owners answer outreach in HVAC forums",
+                        "assumption_ref": 2,
+                        "method": "outreach",
+                        "cost_estimate_usd": 0.0,
+                        "time_estimate_days": 2.0,
+                        "success_criteria": "five replies from owners",
+                        "leverage": "medium",
+                    }
+                ],
+                "risks": ["incumbents may add the feature"],
+            }
+            return reply(
+                json.dumps(plan), model=request.model, input_tokens=4000, output_tokens=2000
+            )
+        return await super().complete(request)
+
+
 _DIMENSIONS = [
     "revenue_potential",
     "gross_margin",

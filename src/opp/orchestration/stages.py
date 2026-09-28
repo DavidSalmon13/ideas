@@ -21,6 +21,7 @@ from opp.agents.discovery import DiscoveryAgent
 from opp.agents.runtime import AgentRuntime
 from opp.agents.shallow_validation import ShallowValidationAgent, lead_task
 from opp.agents.specialists import AXES, SpecialistAgent
+from opp.agents.strategy import StrategyAgent
 from opp.agents.synthesis import SynthesisAgent
 from opp.agents.triage import TriageAgent
 from opp.config.settings import DEFAULT_STAGE_MINIMUMS_USD
@@ -77,6 +78,12 @@ class StageServices:
     synthesis_budget: ResearchBudget = field(
         default_factory=lambda: ResearchBudget(
             max_cost_usd=1.0, max_llm_calls=3, max_searches=0, max_fetches=0
+        )
+    )
+    # Premium tier, one call plus its re-asks; no search (it reasons over the research).
+    strategy_budget: ResearchBudget = field(
+        default_factory=lambda: ResearchBudget(
+            max_cost_usd=1.5, max_llm_calls=3, max_searches=0, max_fetches=0
         )
     )
     # What each stage must have left in the run budget before it may start (plan.md §22).
@@ -378,6 +385,33 @@ class SynthesisStage:
         if opportunity is None or opportunity.synthesis is None:
             return ""
         return opportunity.synthesis.blocking_gap
+
+
+class StrategyStage:
+    """Turns the synthesized research into a concrete business plan for the one selected
+    opportunity: MVP, business model, scenario economics, small-team feasibility and the
+    validation backlog (specs.md §5.6). Premium tier, one bounded call."""
+
+    name = StageName.STRATEGY
+
+    def __init__(self, services: StageServices) -> None:
+        self._services = services
+
+    async def run(self, ctx: StageContext) -> StageOutcome:
+        opportunity = _selected_opportunity(self._services.sessions, ctx.run)
+        if opportunity is None:
+            return StageOutcome(StageResult.NO_CANDIDATES, 0.0, "no opportunity was selected")
+        [agent_run] = _agent_runs(
+            self._services.sessions, ctx.stage, [StrategyAgent.name], ModelTier.PREMIUM
+        )
+        result = await self._services.runtime().run(
+            StrategyAgent(opportunity),
+            agent_run.id,
+            budget=self._services.strategy_budget,
+            run_budget=ctx.run_budget,
+            should_stop=ctx.should_stop,
+        )
+        return outcome_of([result])
 
 
 def _selected_opportunity(sessions: sessionmaker[Session], run: ResearchRun) -> Opportunity | None:

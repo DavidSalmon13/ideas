@@ -1,7 +1,7 @@
 """Phase 5 acceptance (first item): four specialists research the selected opportunity in
 parallel, then synthesis merges their claims and surfaces the contradictions. Driven end to
 end through the orchestrator on an autonomous run, which flows past the checkpoint into deep
-research and synthesis, then stops honestly at the not-yet-built strategy stage."""
+research, synthesis and strategy, then stops honestly at the not-yet-built red-team stage."""
 
 import asyncio
 from collections.abc import Iterator
@@ -29,7 +29,7 @@ from opp.llm.gateway import LLMGateway
 from opp.observability.traces import DbTraceSink
 from opp.orchestration.orchestrator import Orchestrator
 from opp.orchestration.stages import StageServices
-from tests.agents.fakes import DeepFunnelLLM, SnippetSearch
+from tests.agents.fakes import DeepFunnelLLM, SnippetSearch, StrategyFunnelLLM
 from tests.agents.test_discovery import ROUTING
 from tests.agents.test_triage import lead
 from tests.orchestration.test_screening_stages import funnel_leads, seeded_run
@@ -75,9 +75,9 @@ def test_deep_research_and_synthesis_run_the_selected_opportunity(
         RunConfig(checkpoint_mode=CheckpointMode.AUTONOMOUS),
     )
 
-    outcome = asyncio.run(orchestrator(sessions).advance(run_id))
+    outcome = asyncio.run(orchestrator(sessions, StrategyFunnelLLM()).advance(run_id))
 
-    # Autonomous run went through deep research and synthesis, then stopped at strategy.
+    # Autonomous run went through deep research, synthesis and strategy, then stopped at red-team.
     assert outcome.status is RunStatus.COMPLETED_PARTIAL
     with sessions() as session:
         run = RunRepository(session).get(run_id)
@@ -95,13 +95,22 @@ def test_deep_research_and_synthesis_run_the_selected_opportunity(
     reasons = [t.reason for t in run.transitions]
     assert "deep_research completed" in reasons
     assert "synthesis completed" in reasons
-    assert "strategy stage is not available yet" in run.transitions[-1].reason
+    assert "strategy completed" in reasons
+    assert "red_team stage is not available yet" in run.transitions[-1].reason
     assert [t.to_status for t in run.transitions][-4:] == [
-        RunStatus.DEEP_RESEARCH,
         RunStatus.SYNTHESIZING,
         RunStatus.BUILDING_PLAN,
+        RunStatus.RED_TEAM,
         RunStatus.COMPLETED_PARTIAL,
     ]
+
+    # Strategy folded a concrete plan onto the opportunity: scenario economics, a
+    # load-bearing assumption, its validation experiment, and the small-team answers.
+    assert opportunity is not None
+    assert opportunity.economics.scenarios.base.outputs
+    assert opportunity.economics.load_bearing_assumption_ids
+    assert opportunity.validation_backlog
+    assert opportunity.small_team_feasibility.can_one_person_start is not None
 
     # Four specialists ran in parallel on the one survivor.
     assert {ar.agent_name for ar in specialists} == {axis.agent_name for axis in AXES}
@@ -162,7 +171,7 @@ def test_a_blocking_gap_kicks_back_to_deep_research_once(
     more pass; the second synthesis still flags the gap but the ≤1/stage cap lets the run go
     on rather than looping."""
     run_id = seeded_run(sessions, [lead()], RunConfig(checkpoint_mode=CheckpointMode.AUTONOMOUS))
-    orch = orchestrator(sessions, DeepFunnelLLM(blocking_gap="no real competition evidence"))
+    orch = orchestrator(sessions, StrategyFunnelLLM(blocking_gap="no real competition evidence"))
 
     outcome = asyncio.run(orch.advance(run_id))
 
@@ -181,7 +190,7 @@ def test_a_blocking_gap_kicks_back_to_deep_research_once(
     assert any("kickback to deep_research — no real competition evidence" in r for r in reasons)
     # The cap held: the second synthesis proceeded instead of kicking back again.
     assert any("kickback cap reached" in r for r in reasons)
-    assert "strategy stage is not available yet" in run.transitions[-1].reason
+    assert "red_team stage is not available yet" in run.transitions[-1].reason
     # The re-entered deep-research stage is marked as a kickback.
     deep = [s for s in stages if s.name is StageName.DEEP_RESEARCH]
     assert sorted(s.kickback_count for s in deep) == [0, 1]
