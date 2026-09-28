@@ -33,3 +33,9 @@ agent's prompts or output models change.
   business model, pricing, distribution, scenario unit-economics with labeled assumptions, small-team
   feasibility, validation backlog); reasons over the research, adds no sources, so every figure is an
   estimate/assumption; `prompts/strategy/v1`.
+- `redteam.py` — one premium-tier call attacking the whole opportunity; ranked, evidence-graded
+  attacks; a fatal flaw is only honoured when the attack cites a claim; writes `Opportunity.red_team`;
+  `prompts/redteam/v1`.
+- `judge.py` — one premium-tier call scoring all 16 dimensions after the attack, held to their
+  evidence; the composite (ranking only) and the categorical verdict, with `evaluation/framework.py`
+  applying the non-compensatory hard-gate/fatal-flaw overrides that force a Kill; `prompts/judge/v1`.

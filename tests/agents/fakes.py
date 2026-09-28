@@ -323,6 +323,61 @@ class StrategyFunnelLLM(DeepFunnelLLM):
         return await super().complete(request)
 
 
+@dataclass
+class FullFunnelLLM(StrategyFunnelLLM):
+    """Extends the funnel through red-team and judge. The red-team raises one attack citing
+    claim 1 (fatal when ``fatal`` is set); the judge scores every dimension ``judge_score``
+    (sourced, citing claim 1) and returns ``verdict``."""
+
+    fatal: bool = False
+    judge_score: int = 4
+    verdict: str = "promising_but_unproven"
+
+    async def complete(self, request: CompletionRequest) -> Completion:
+        kind = request.output_type.__name__ if request.output_type else ""
+        if kind == "RedTeamResult":
+            self.requests.append(request)
+            attacks = [
+                {
+                    "claim": "Incumbents could copy the dispatch board cheaply",
+                    "severity": "critical" if self.fatal else "medium",
+                    "cites": [1],
+                    "is_fatal": self.fatal,
+                }
+            ]
+            return reply(
+                json.dumps({"attacks": attacks, "fatal_flaw": self.fatal}),
+                model=request.model,
+                input_tokens=3000,
+                output_tokens=800,
+            )
+        if kind == "JudgeResult":
+            self.requests.append(request)
+            dimensions = [
+                {
+                    "dimension": dim,
+                    "score": self.judge_score,
+                    "justification": f"{dim} looks fine from the evidence",
+                    "evidence": "sourced",
+                    "cites": [1],
+                }
+                for dim in _DIMENSIONS
+            ]
+            return reply(
+                json.dumps(
+                    {
+                        "dimensions": dimensions,
+                        "verdict": self.verdict,
+                        "justification": "solid pain, unproven pricing",
+                    }
+                ),
+                model=request.model,
+                input_tokens=4000,
+                output_tokens=1500,
+            )
+        return await super().complete(request)
+
+
 _DIMENSIONS = [
     "revenue_potential",
     "gross_margin",

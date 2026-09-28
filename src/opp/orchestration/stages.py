@@ -18,6 +18,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from opp.agents.base import AgentResult
 from opp.agents.budget import ResearchBudget, RunBudget
 from opp.agents.discovery import DiscoveryAgent
+from opp.agents.judge import JudgeAgent
+from opp.agents.redteam import RedTeamAgent
 from opp.agents.runtime import AgentRuntime
 from opp.agents.shallow_validation import ShallowValidationAgent, lead_task
 from opp.agents.specialists import AXES, SpecialistAgent
@@ -82,6 +84,17 @@ class StageServices:
     )
     # Premium tier, one call plus its re-asks; no search (it reasons over the research).
     strategy_budget: ResearchBudget = field(
+        default_factory=lambda: ResearchBudget(
+            max_cost_usd=1.5, max_llm_calls=3, max_searches=0, max_fetches=0
+        )
+    )
+    # Premium tier; red-team + judge share specs.md §21.2's $2-3 (one bounded call each).
+    redteam_budget: ResearchBudget = field(
+        default_factory=lambda: ResearchBudget(
+            max_cost_usd=1.5, max_llm_calls=3, max_searches=0, max_fetches=0
+        )
+    )
+    judge_budget: ResearchBudget = field(
         default_factory=lambda: ResearchBudget(
             max_cost_usd=1.5, max_llm_calls=3, max_searches=0, max_fetches=0
         )
@@ -412,6 +425,72 @@ class StrategyStage:
             should_stop=ctx.should_stop,
         )
         return outcome_of([result])
+
+
+class RedTeamStage:
+    """Attacks the selected opportunity and hunts the fatal flaw before the Judge scores it
+    (specs.md §5.7). Premium tier, one bounded call over the whole opportunity."""
+
+    name = StageName.RED_TEAM
+
+    def __init__(self, services: StageServices) -> None:
+        self._services = services
+
+    async def run(self, ctx: StageContext) -> StageOutcome:
+        opportunity = _selected_opportunity(self._services.sessions, ctx.run)
+        if opportunity is None:
+            return StageOutcome(StageResult.NO_CANDIDATES, 0.0, "no opportunity was selected")
+        claims, sources = _opportunity_evidence(self._services.sessions, opportunity)
+        [agent_run] = _agent_runs(
+            self._services.sessions, ctx.stage, [RedTeamAgent.name], ModelTier.PREMIUM
+        )
+        result = await self._services.runtime().run(
+            RedTeamAgent(opportunity, claims, sources),
+            agent_run.id,
+            budget=self._services.redteam_budget,
+            run_budget=ctx.run_budget,
+            should_stop=ctx.should_stop,
+        )
+        return outcome_of([result])
+
+
+class EvaluationStage:
+    """The Judge scores the opportunity against the framework after the attack and issues the
+    categorical verdict, with the non-compensatory overrides applied (specs.md §5.8, §17)."""
+
+    name = StageName.EVALUATION
+
+    def __init__(self, services: StageServices) -> None:
+        self._services = services
+
+    async def run(self, ctx: StageContext) -> StageOutcome:
+        opportunity = _selected_opportunity(self._services.sessions, ctx.run)
+        if opportunity is None:
+            return StageOutcome(StageResult.NO_CANDIDATES, 0.0, "no opportunity was selected")
+        claims, sources = _opportunity_evidence(self._services.sessions, opportunity)
+        [agent_run] = _agent_runs(
+            self._services.sessions, ctx.stage, [JudgeAgent.name], ModelTier.PREMIUM
+        )
+        result = await self._services.runtime().run(
+            JudgeAgent(opportunity, claims, sources),
+            agent_run.id,
+            budget=self._services.judge_budget,
+            run_budget=ctx.run_budget,
+            should_stop=ctx.should_stop,
+        )
+        return outcome_of([result])
+
+
+def _opportunity_evidence(
+    sessions: sessionmaker[Session], opportunity: Opportunity
+) -> tuple[list[Claim], dict[UUID, Source]]:
+    """Every claim in the opportunity document and the sources it cites."""
+    claims = list(opportunity.claims())
+    with sessions() as session:
+        sources = SourceRepository(session).get_many(
+            {sid for claim in claims for sid in claim.source_ids}
+        )
+    return claims, sources
 
 
 def _selected_opportunity(sessions: sessionmaker[Session], run: ResearchRun) -> Opportunity | None:

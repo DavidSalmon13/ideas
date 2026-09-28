@@ -627,7 +627,7 @@ This is the earliest point the product demonstrates its core value: a grounded, 
 
 **Phase 6 — Strategy + evaluation + report**
 - [x] Strategy (unit economics, small-team, validation backlog)
-- [ ] RedTeam + Judge (framework, verdict, non-compensatory overrides)
+- [x] RedTeam + Judge (framework, verdict, non-compensatory overrides)
 - [ ] Report builder (1-page brief + dossier, source-traceable)
 - [ ] **Milestone M1 reached**
 

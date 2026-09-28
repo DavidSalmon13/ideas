@@ -175,14 +175,14 @@ def test_only_the_top_survivors_are_scored(sessions: sessionmaker[Session]) -> N
 
     outcome = asyncio.run(orchestrator(sessions).advance(run_id))
 
-    # Autonomous: past the checkpoint, through deep research, synthesis and strategy, stopping
-    # at the red-team stage, which doesn't exist yet. Only the single top survivor was scored.
-    assert outcome.status is RunStatus.COMPLETED_PARTIAL
+    # Autonomous: past the checkpoint, through the whole funnel to completion. Only the single
+    # top survivor was ever scored and taken deep.
+    assert outcome.status is RunStatus.COMPLETED
     with sessions() as session:
         [only] = OpportunityRepository(session).list(run_id=run_id)
         run = RunRepository(session).get(run_id)
     assert only.shallow is not None and only.shallow.rank == 1
-    assert run is not None and "red_team stage is not available yet" in (run.transitions[-1].reason)
+    assert run is not None and run.transitions[-1].to_status is RunStatus.COMPLETED
 
 
 def test_a_later_run_does_not_resurface_known_leads(sessions: sessionmaker[Session]) -> None:

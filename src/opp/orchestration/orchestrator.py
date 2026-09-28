@@ -53,6 +53,8 @@ from opp.orchestration.budget import minimum_to_finish, precheck, preflight
 from opp.orchestration.stages import (
     DeepResearchStage,
     DiscoveryStage,
+    EvaluationStage,
+    RedTeamStage,
     ShallowValidationStage,
     StageContext,
     StageHandler,
@@ -118,6 +120,8 @@ def default_handlers(services: StageServices) -> dict[StageName, StageHandler]:
         StageName.DEEP_RESEARCH: DeepResearchStage(services),
         StageName.SYNTHESIS: SynthesisStage(services),
         StageName.STRATEGY: StrategyStage(services),
+        StageName.RED_TEAM: RedTeamStage(services),
+        StageName.EVALUATION: EvaluationStage(services),
     }
 
 
