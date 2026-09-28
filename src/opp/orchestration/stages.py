@@ -7,7 +7,7 @@ instead of starting over.
 """
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol
@@ -21,6 +21,7 @@ from opp.agents.discovery import DiscoveryAgent
 from opp.agents.runtime import AgentRuntime
 from opp.agents.shallow_validation import ShallowValidationAgent, lead_task
 from opp.agents.triage import TriageAgent
+from opp.config.settings import DEFAULT_STAGE_MINIMUMS_USD
 from opp.db.repositories import (
     AgentRunRepository,
     LeadRepository,
@@ -62,6 +63,10 @@ class StageServices:
         default_factory=lambda: ResearchBudget(
             max_cost_usd=3.0, max_llm_calls=8, max_searches=6, max_fetches=0
         )
+    )
+    # What each stage must have left in the run budget before it may start (plan.md §22).
+    stage_minimums_usd: Mapping[StageName, float] = field(
+        default_factory=lambda: dict(DEFAULT_STAGE_MINIMUMS_USD)
     )
 
     def runtime(self) -> AgentRuntime:

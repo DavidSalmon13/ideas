@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import textwrap
+from dataclasses import replace
 from pathlib import Path
 from uuid import UUID
 
@@ -191,10 +192,13 @@ def test_resume_after_the_process_is_killed(
 
 
 def test_a_budget_halted_run_resumes_after_a_top_up(sessions: sessionmaker[Session]) -> None:
+    # A ceiling this small is refused by the pre-flight check, so it is turned off here to
+    # exercise the runtime's own mid-stage budget stop.
     tight = CONFIG.model_copy(update={"budget_ceiling_usd": 0.04})
-    halted = asyncio.run(
-        discovery_only(services(sessions, DiscoveryLLM(), SnippetSearch())).start(tight)
+    no_preflight = replace(
+        services(sessions, DiscoveryLLM(), SnippetSearch()), stage_minimums_usd={}
     )
+    halted = asyncio.run(discovery_only(no_preflight).start(tight))
     assert halted.status is RunStatus.HALTED_BUDGET
     leads_before = assert_every_lead_is_sourced(sessions, halted.run_id)
     assert leads_before < TARGET

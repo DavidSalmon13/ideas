@@ -12,6 +12,14 @@ holds. Stages do the work (``StageHandler``); agents never move the run.
 - **recover** is the startup scan: it continues every run left in a working state by a
   process that died, skipping runs still being updated (another process may own them).
 - **cancel** is cooperative: checked between sub-tasks and between stages.
+- **checkpoint** records the operator's decision at ``AWAITING_CHECKPOINT`` (approve the
+  top candidate, re-pick a runner-up, or veto them all) and continues the run; autonomous
+  runs auto-select the top candidate instead.
+
+Budget (plan.md §22): ``create_run`` refuses a ceiling below the least a full run could
+cost (pre-flight), and before each stage the remaining budget must cover that stage's
+minimum or the run halts ``HALTED_BUDGET`` without starting it (pre-check). Any run that
+stops short of ``COMPLETED`` gets an incomplete report (specs.md §18.4).
 """
 
 from collections.abc import Mapping
@@ -20,13 +28,28 @@ from datetime import timedelta
 from uuid import UUID
 
 import structlog
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from opp.agents.budget import RunBudget
-from opp.db.repositories import RunRepository, StageRepository, TraceRepository
+from opp.db.repositories import (
+    OpportunityRepository,
+    ReportRepository,
+    RunRepository,
+    StageRepository,
+    TraceRepository,
+)
 from opp.domain.base import utcnow
-from opp.domain.enums import CheckpointMode, RunStatus, StageName, StageStatus
-from opp.domain.run import ResearchRun, RunConfig, RunTransition, Stage
+from opp.domain.enums import (
+    CheckpointAction,
+    CheckpointMode,
+    RunStatus,
+    StageName,
+    StageStatus,
+)
+from opp.domain.opportunity import Opportunity
+from opp.domain.run import CheckpointDecision, ResearchRun, RunConfig, RunTransition, Stage
+from opp.orchestration.budget import minimum_to_finish, precheck, preflight
 from opp.orchestration.stages import (
     DiscoveryStage,
     ShallowValidationStage,
@@ -44,6 +67,7 @@ from opp.orchestration.state_machine import (
     check_transition,
     next_status,
 )
+from opp.reporting.partial import build_partial_report
 
 log = structlog.get_logger(__name__)
 
@@ -55,8 +79,23 @@ _ON_RESULT = {
 }
 
 
+# Every way a run can stop short of COMPLETED; each gets an incomplete report.
+PARTIAL_STOPS = frozenset(
+    {
+        RunStatus.HALTED_BUDGET,
+        RunStatus.HALTED_ERROR,
+        RunStatus.CANCELLED,
+        RunStatus.COMPLETED_PARTIAL,
+    }
+)
+
+
 class ResumeError(Exception):
     """The run can't be resumed (unknown, already ended, or a bad top-up)."""
+
+
+class CheckpointError(Exception):
+    """The checkpoint decision can't be applied (wrong state, unknown pick, no reason)."""
 
 
 @dataclass(frozen=True)
@@ -89,6 +128,9 @@ class Orchestrator:
     # --- lifecycle ---------------------------------------------------------------------
 
     def create_run(self, run_config: RunConfig) -> ResearchRun:
+        """Store a new run. Raises ``BudgetPreflightError`` when its ceiling can't cover
+        the stage minimums."""
+        preflight(run_config.budget_ceiling_usd, self._services.stage_minimums_usd)
         run = ResearchRun(run_config=run_config)
         with self._sessions() as session:
             RunRepository(session).add(run)
@@ -138,10 +180,78 @@ class Orchestrator:
             run = runs.get(run_id)
             if run is None or run.is_terminal:
                 return
-            if run.status in HALTED or run.status is RunStatus.AWAITING_CHECKPOINT:
-                _move(run, RunStatus.CANCELLED, "cancelled by the operator")
-                runs.upsert(run)
-                session.commit()
+            if run.status not in HALTED and run.status is not RunStatus.AWAITING_CHECKPOINT:
+                return
+            _move(run, RunStatus.CANCELLED, "cancelled by the operator")
+            runs.upsert(run)
+            session.commit()
+        self._emit_partial(run_id)
+
+    def shortlist(self, run_id: UUID) -> list[Opportunity]:
+        """The run's shallow-scored opportunities, best first (rank 1 = the default pick)."""
+        with self._sessions() as session:
+            return _shortlist(session, run_id)
+
+    async def checkpoint(
+        self,
+        run_id: UUID,
+        action: CheckpointAction,
+        *,
+        opportunity_id: UUID | None = None,
+        reason: str | None = None,
+    ) -> RunOutcome:
+        """Apply the operator's checkpoint decision (specs.md §2.7). ``APPROVE`` takes the
+        top-ranked candidate; ``PICK`` takes ``opportunity_id`` (a runner-up needs a
+        one-line reason); ``VETO`` rejects the whole shortlist (with a reason) and ends the
+        run partial. Approve and pick continue the run into deep research."""
+        with self._sessions() as session:
+            run = RunRepository(session).get(run_id)
+            if run is None:
+                raise CheckpointError(f"no run {run_id}")
+            if run.status is not RunStatus.AWAITING_CHECKPOINT:
+                raise CheckpointError(
+                    f"run {run_id} is {run.status.value}, not waiting at the checkpoint"
+                )
+            shortlist = _shortlist(session, run_id)
+        if action is CheckpointAction.AUTO:
+            raise CheckpointError("auto-selection is for autonomous runs only")
+        if action is not CheckpointAction.VETO:
+            if not shortlist:
+                raise CheckpointError(f"run {run_id} has no shortlist to pick from")
+            if action is CheckpointAction.APPROVE:
+                opportunity_id = shortlist[0].id
+            elif opportunity_id not in {o.id for o in shortlist}:
+                raise CheckpointError(f"{opportunity_id} is not on this run's shortlist")
+            elif opportunity_id == shortlist[0].id:
+                action = CheckpointAction.APPROVE  # picking the top one is approving it
+        try:
+            decision = CheckpointDecision(
+                action=action,
+                opportunity_id=None if action is CheckpointAction.VETO else opportunity_id,
+                reason=reason,
+            )
+        except ValidationError as exc:
+            message = exc.errors()[0]["msg"].removeprefix("Value error, ")
+            raise CheckpointError(message) from exc
+
+        if decision.action is CheckpointAction.VETO:
+            self._transition(
+                run_id,
+                RunStatus.COMPLETED_PARTIAL,
+                f"shortlist vetoed at the checkpoint: {decision.reason}",
+                checkpoint=decision,
+            )
+            return self._outcome(run_id)
+        title = next(o.title for o in shortlist if o.id == decision.opportunity_id)
+        verb = "approved" if decision.action is CheckpointAction.APPROVE else "picked"
+        why = f" ({decision.reason})" if decision.reason else ""
+        self._transition(
+            run_id,
+            next_status(RunStatus.AWAITING_CHECKPOINT, CheckpointMode.MANDATORY),
+            f"checkpoint: {verb} '{title}'{why}",
+            checkpoint=decision,
+        )
+        return await self.advance(run_id)
 
     async def recover(self, *, stale_after: timedelta) -> list[RunOutcome]:
         """The startup recovery scan (plan.md §10): continue every run a dead process left
@@ -188,6 +298,17 @@ class Orchestrator:
                 )
                 break
 
+            shortfall = precheck(
+                stage_name,
+                remaining_usd=run_budget.remaining_usd,
+                ceiling_usd=run_budget.ceiling_usd,
+                minimums=self._services.stage_minimums_usd,
+                spent_in_stage=self._unfinished_stage_cost(run_id, stage_name),
+            )
+            if shortfall is not None:
+                run = self._transition(run_id, RunStatus.HALTED_BUDGET, shortfall)
+                break
+
             stage = self._open_stage(run, stage_name)
             outcome = await handler.run(
                 StageContext(
@@ -201,29 +322,76 @@ class Orchestrator:
             log.info(
                 "stage_ended", run_id=str(run_id), stage=stage_name.value, result=outcome.result
             )
+            checkpoint = None
             if outcome.result is StageResult.COMPLETED:
                 target = next_status(run.status, _mode(run))
                 reason = f"{stage_name.value} completed"
+                if target is RunStatus.DEEP_RESEARCH and run.checkpoint is None:
+                    checkpoint = self._auto_select(run_id)  # autonomous: no checkpoint
             else:
                 target = _ON_RESULT[outcome.result]
                 reason = f"{stage_name.value}: {outcome.detail}"
-            run = self._transition(run_id, target, reason)
+            run = self._transition(run_id, target, reason, checkpoint=checkpoint)
 
         self._cancelled.discard(run_id)
         return RunOutcome(run_id=run.id, status=run.status, cost_usd=run.cost_to_date_usd)
 
+    def _auto_select(self, run_id: UUID) -> CheckpointDecision | None:
+        """Autonomous mode's stand-in for the checkpoint: the top-ranked candidate."""
+        shortlist = self.shortlist(run_id)
+        if not shortlist:
+            return None
+        return CheckpointDecision(action=CheckpointAction.AUTO, opportunity_id=shortlist[0].id)
+
     # --- persistence -------------------------------------------------------------------
 
-    def _transition(self, run_id: UUID, target: RunStatus, reason: str) -> ResearchRun:
+    def _transition(
+        self,
+        run_id: UUID,
+        target: RunStatus,
+        reason: str,
+        *,
+        checkpoint: CheckpointDecision | None = None,
+    ) -> ResearchRun:
         with self._sessions() as session:
             runs = RunRepository(session)
             run = _get(session, run_id)
             _move(run, target, reason)
+            if checkpoint is not None:
+                run.checkpoint = checkpoint
             run.cost_to_date_usd = _spent(session, run)
             runs.upsert(run)
             session.commit()
         log.info("run_transition", run_id=str(run_id), to=target.value, reason=reason)
+        if target in PARTIAL_STOPS:
+            self._emit_partial(run_id)
         return run
+
+    def _emit_partial(self, run_id: UUID) -> None:
+        """Store the best incomplete deliverable for a run that stopped short."""
+        with self._sessions() as session:
+            run = _get(session, run_id)
+            to_finish = minimum_to_finish(
+                StageRepository(session).list_for_run(run_id), self._services.stage_minimums_usd
+            )
+            report = build_partial_report(session, run, still_needed_usd=to_finish)
+            ReportRepository(session).add(report)
+            session.commit()
+        log.info("partial_report", run_id=str(run_id), report_id=str(report.id))
+
+    def _outcome(self, run_id: UUID) -> RunOutcome:
+        with self._sessions() as session:
+            run = _get(session, run_id)
+        return RunOutcome(run_id=run.id, status=run.status, cost_usd=run.cost_to_date_usd)
+
+    def _unfinished_stage_cost(self, run_id: UUID, name: StageName) -> float:
+        """What the stage's unfinished attempt (being resumed) has already spent."""
+        with self._sessions() as session:
+            attempts = [s for s in StageRepository(session).list_for_run(run_id) if s.name is name]
+        latest = max(attempts, key=lambda s: s.attempt, default=None)
+        if latest is None or latest.status is StageStatus.COMPLETED:
+            return 0.0
+        return latest.cost_usd
 
     def _open_stage(self, run: ResearchRun, name: StageName) -> Stage:
         """The stage row to work in: the latest attempt if it didn't complete (resume),
@@ -268,6 +436,11 @@ def _get(session: Session, run_id: UUID) -> ResearchRun:
     if run is None:
         raise LookupError(f"run {run_id} not found")
     return run
+
+
+def _shortlist(session: Session, run_id: UUID) -> list[Opportunity]:
+    scored = [o for o in OpportunityRepository(session).list(run_id=run_id) if o.shallow]
+    return sorted(scored, key=lambda o: (o.shallow.rank or 10**6, str(o.id)))  # type: ignore[union-attr]
 
 
 def _spent(session: Session, run: ResearchRun) -> float:

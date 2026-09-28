@@ -5,7 +5,11 @@
                  [--cassette PATH [--cassette-mode replay|record|once]]
     opp resume RUN_ID [--budget USD] [--cassette PATH [--cassette-mode ...]]
     opp recover [--all]
+    opp checkpoint RUN_ID [--approve | --pick OPPORTUNITY_ID | --veto] [--reason TEXT]
+                   [--cassette PATH [--cassette-mode ...]]
     opp leads RUN_ID
+    opp cost RUN_ID
+    opp report RUN_ID
 
 ``--cassette`` with the default ``replay`` mode runs fully offline from a recording (no
 API keys needed); ``record``/``once`` call the real providers and save what they return.
@@ -13,6 +17,12 @@ Without a cassette, searches go through the SQLite cache. ``resume`` continues a
 discovery run that was interrupted (process killed, crash) or halted on budget, from the
 agents' work ledgers; ``--budget`` raises its ceiling. ``recover`` is the startup
 recovery scan: it continues every run a dead process left mid-stage.
+
+A run in the default mandatory mode stops at the checkpoint with a ranked shortlist.
+``checkpoint`` without a decision shows it; ``--approve`` sends the top candidate to deep
+research, ``--pick`` a runner-up (``--reason`` required), ``--veto`` rejects them all
+(``--reason`` required). ``cost`` is the budget meter; ``report`` prints the latest
+report (an incomplete-run brief when the run stopped short).
 """
 
 import argparse
@@ -27,16 +37,24 @@ from sqlalchemy.orm import Session, sessionmaker
 from opp.agents.budget import ResearchBudget
 from opp.cassettes.cassette import Cassette, CassetteMode
 from opp.cassettes.providers import CassetteLLMProvider, CassetteSearchProvider
-from opp.cli.discover import format_leads, format_run_summary, format_shortlist
+from opp.cli.discover import (
+    format_checkpoint,
+    format_cost,
+    format_leads,
+    format_report,
+    format_run_summary,
+    format_shortlist,
+)
 from opp.config.settings import Settings, get_settings
 from opp.db.session import create_db_engine, create_session_factory
-from opp.domain.enums import SignalSource
+from opp.domain.enums import CheckpointAction, SignalSource
 from opp.domain.run import DiscoveryScope, LeadTargets, RunConfig
 from opp.llm.factory import build_gateway, build_provider
 from opp.llm.types import LLMProvider
 from opp.observability.logging import configure_logging
 from opp.observability.traces import DbTraceSink
-from opp.orchestration.orchestrator import Orchestrator, ResumeError
+from opp.orchestration.budget import BudgetPreflightError
+from opp.orchestration.orchestrator import CheckpointError, Orchestrator, ResumeError
 from opp.orchestration.stages import StageServices
 from opp.research.cache import CachedSearchProvider
 from opp.research.factory import SearchConfigError, build_search_provider
@@ -78,8 +96,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _cassette_args(recover)
 
+    checkpoint = commands.add_parser(
+        "checkpoint",
+        help="show the shortlist of a run waiting at the checkpoint, or decide it",
+    )
+    checkpoint.add_argument("run_id", type=UUID)
+    decision = checkpoint.add_mutually_exclusive_group()
+    decision.add_argument(
+        "--approve", action="store_true", help="deep-research the top-ranked candidate"
+    )
+    decision.add_argument(
+        "--pick", type=UUID, metavar="OPPORTUNITY_ID", help="deep-research this one instead"
+    )
+    decision.add_argument("--veto", action="store_true", help="reject the whole shortlist")
+    checkpoint.add_argument("--reason", help="one line: why (required for --pick and --veto)")
+    _cassette_args(checkpoint)
+
     leads = commands.add_parser("leads", help="list the leads of a run")
     leads.add_argument("run_id", type=UUID)
+    cost = commands.add_parser("cost", help="the budget meter of a run")
+    cost.add_argument("run_id", type=UUID)
+    report = commands.add_parser("report", help="the latest report of a run")
+    report.add_argument("run_id", type=UUID)
     return parser
 
 
@@ -106,6 +144,16 @@ def main(argv: list[str] | None = None) -> int:
                 print()
                 print(shortlist)
             return 0
+        if args.command == "cost":
+            print(format_cost(sessions, args.run_id, settings.stage_minimums_usd))
+            return 0
+        if args.command == "report":
+            text = format_report(sessions, args.run_id)
+            print(text or f"Run {args.run_id} has no report yet.")
+            return 0 if text else 1
+        if args.command == "checkpoint" and not (args.approve or args.pick or args.veto):
+            print(format_checkpoint(sessions, args.run_id))
+            return 0
         return _discover(args, settings, sessions)
     finally:
         engine.dispose()
@@ -123,7 +171,22 @@ def _discover(args: argparse.Namespace, settings: Settings, sessions: sessionmak
         print(f"Search is not configured: {exc}", file=sys.stderr)
         return 2
     try:
-        if args.command == "resume":
+        if args.command == "checkpoint":
+            action = (
+                CheckpointAction.APPROVE
+                if args.approve
+                else CheckpointAction.PICK
+                if args.pick
+                else CheckpointAction.VETO
+            )
+            outcomes = [
+                asyncio.run(
+                    orchestrator.checkpoint(
+                        args.run_id, action, opportunity_id=args.pick, reason=args.reason
+                    )
+                )
+            ]
+        elif args.command == "resume":
             outcomes = [
                 asyncio.run(orchestrator.resume(args.run_id, budget_ceiling_usd=args.budget))
             ]
@@ -137,6 +200,12 @@ def _discover(args: argparse.Namespace, settings: Settings, sessions: sessionmak
     except ResumeError as exc:
         print(f"Cannot resume: {exc}", file=sys.stderr)
         return 2
+    except CheckpointError as exc:
+        print(f"Cannot apply the checkpoint decision: {exc}", file=sys.stderr)
+        return 2
+    except BudgetPreflightError as exc:
+        print(f"Budget too small: {exc}", file=sys.stderr)
+        return 2
     finally:
         if cassette is not None:
             cassette.save()
@@ -146,7 +215,7 @@ def _discover(args: argparse.Namespace, settings: Settings, sessions: sessionmak
         if shortlist := format_shortlist(sessions, outcome.run_id):
             print(shortlist)
             print()
-        print(format_run_summary(sessions, outcome.run_id))
+        print(format_run_summary(sessions, outcome.run_id, settings.stage_minimums_usd))
     return 0
 
 
@@ -170,6 +239,7 @@ def _services(
     sink = DbTraceSink(sessions)
     return StageServices(
         sessions=sessions,
+        stage_minimums_usd=settings.stage_minimums_usd,
         gateway=build_gateway(settings, sink, provider=llm),
         search=search,
         sink=sink,

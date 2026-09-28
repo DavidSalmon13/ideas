@@ -136,3 +136,60 @@ def test_cli_leads_for_an_unknown_run(
     run_id = uuid4()
     assert main(["leads", str(run_id)]) == 0
     assert f"No run {run_id}" in capsys.readouterr().out
+
+
+def test_cli_checkpoint_cost_and_incomplete_report(
+    sessions: sessionmaker[Session], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cassette = tmp_path / "funnel.json"
+    record_cassette(cassette, tmp_path)
+    replay = ["--cassette", str(cassette)]
+    args = ["discover", "--signal", "unmet_need", "--signal", "incumbent_weakness"]
+    assert main([*args, "--industry", "HVAC", "--leads", "4", *replay]) == 0
+    assert "Review and decide with: opp checkpoint" in capsys.readouterr().out
+    with sessions() as session:
+        [run] = RunRepository(session).list_by_status(RunStatus.AWAITING_CHECKPOINT)
+    run_id = str(run.id)
+
+    # The checkpoint view: ranked shortlist, rough scores, a rationale, the commands.
+    assert main(["checkpoint", run_id]) == 0
+    view = capsys.readouterr().out
+    assert "is waiting at the checkpoint" in view
+    assert "#1 " in view and "composite" in view and "strongest" in view
+    assert f"opp checkpoint {run_id} --approve" in view
+
+    # The budget meter.
+    assert main(["cost", run_id]) == 0
+    meter = capsys.readouterr().out
+    assert "of $20.00" in meter and "By stage:" in meter and "discovery: $" in meter
+    assert "The rest of the funnel needs at least $" in meter
+
+    # A veto needs a reason; nothing changes without one.
+    assert main(["checkpoint", run_id, "--veto", *replay]) == 2
+    assert "one-line reason" in capsys.readouterr().err
+
+    # Approving continues the run; deep research isn't built yet, so it stops there with
+    # an incomplete report.
+    assert main(["checkpoint", run_id, "--approve", *replay]) == 0
+    out = capsys.readouterr().out
+    assert f"Incomplete-run report: opp report {run_id}" in out
+    assert main(["checkpoint", run_id]) == 0
+    assert "Checkpoint decision: approve" in capsys.readouterr().out
+
+    assert main(["report", run_id]) == 0
+    report = capsys.readouterr().out
+    assert "INCOMPLETE — halted at stage deep_research" in report
+    assert "Best candidate so far:" in report and "Never examined" in report
+    assert main(["report", str(uuid4())]) == 1
+
+
+def test_cli_refuses_a_budget_below_the_pre_flight_minimum(
+    sessions: sessionmaker[Session], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cassette = tmp_path / "funnel.json"
+    record_cassette(cassette, tmp_path)
+    code = main(["discover", "--budget", "5", "--cassette", str(cassette)])
+    assert code == 2
+    assert "Budget too small" in capsys.readouterr().err
+    with sessions() as session:
+        assert RunRepository(session).list_resumable() == []

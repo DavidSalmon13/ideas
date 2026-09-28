@@ -196,6 +196,15 @@ class CheckpointMode(StrEnum):
     AUTONOMOUS = "autonomous"
 
 
+class CheckpointAction(StrEnum):
+    """What the operator decided at the checkpoint (specs.md §2.7)."""
+
+    APPROVE = "approve"  # deep-research the top-ranked candidate
+    PICK = "pick"  # re-pick a runner-up instead (needs a one-line reason)
+    VETO = "veto"  # reject the whole shortlist (needs a one-line reason)
+    AUTO = "auto"  # autonomous mode selected the top-ranked candidate
+
+
 class RunStatus(StrEnum):
     """Run state machine (specs.md §19.1)."""
 

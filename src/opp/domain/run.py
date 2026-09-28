@@ -1,15 +1,17 @@
 """Run configuration and the nested run -> stage -> agent state (specs.md §3.3, §19)."""
 
 from datetime import datetime
+from typing import Self
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import Field, field_validator, model_validator
 
 from opp.domain.base import DomainModel, Entity, utcnow
 from opp.domain.enums import (
     TERMINAL_RUN_STATUSES,
     AgentRunStatus,
     BusinessShape,
+    CheckpointAction,
     CheckpointMode,
     Dimension,
     Level,
@@ -83,14 +85,50 @@ class RunTransition(DomainModel):
     reason: str = ""
 
 
+class CheckpointDecision(DomainModel):
+    """The checkpoint's outcome: which shortlisted opportunity gets deep research, or a
+    veto of all of them. Vetoes and re-picks carry the operator's one-line reason, kept
+    for preference learning (intent.md §19.2)."""
+
+    action: CheckpointAction
+    opportunity_id: UUID | None = None
+    reason: str | None = None
+    decided_at: datetime = Field(default_factory=utcnow)
+
+    @field_validator("reason")
+    @classmethod
+    def _one_line(cls, reason: str | None) -> str | None:
+        if reason is None:
+            return None
+        return " ".join(reason.split()) or None
+
+    @model_validator(mode="after")
+    def _consistent(self) -> Self:
+        if self.action is CheckpointAction.VETO:
+            if self.opportunity_id is not None:
+                raise ValueError("a veto selects no opportunity")
+        elif self.opportunity_id is None:
+            raise ValueError(f"{self.action.value} must select an opportunity")
+        needs_reason = self.action in (CheckpointAction.PICK, CheckpointAction.VETO)
+        if needs_reason and not self.reason:
+            raise ValueError(f"a {self.action.value} needs a one-line reason")
+        return self
+
+
 class ResearchRun(Entity):
     status: RunStatus = RunStatus.CREATED
     run_config: RunConfig = Field(default_factory=RunConfig)
     cost_to_date_usd: float = Field(default=0.0, ge=0)
     current_stage: StageName | None = None
     transitions: list[RunTransition] = Field(default_factory=list)
+    checkpoint: CheckpointDecision | None = None
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
+
+    @property
+    def selected_opportunity_id(self) -> UUID | None:
+        """The opportunity chosen for deep research, once the checkpoint has decided."""
+        return self.checkpoint.opportunity_id if self.checkpoint else None
 
     @property
     def budget_ceiling_usd(self) -> float:

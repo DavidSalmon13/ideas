@@ -1,8 +1,9 @@
 """Plain-text views of a run for the CLI: its leads (each with the sources behind its
-claims and its triage outcome), the shallow-validation shortlist, and how each
-discovery agent did. Running and resuming runs is the orchestrator's job
-(``opp.orchestration``)."""
+claims and its triage outcome), the shallow-validation shortlist, the checkpoint view,
+the budget meter, the latest report, and how each discovery agent did. Running and
+resuming runs is the orchestrator's job (``opp.orchestration``)."""
 
+import json
 from uuid import UUID
 
 from sqlalchemy.orm import Session, sessionmaker
@@ -12,14 +13,19 @@ from opp.db.repositories import (
     KillRepository,
     LeadRepository,
     OpportunityRepository,
+    ReportRepository,
     RunRepository,
     SourceRepository,
     StageRepository,
 )
-from opp.domain.enums import EvidenceBasis, LeadStatus, StageName
+from opp.domain.enums import EvidenceBasis, LeadStatus, RunStatus, StageName
 from opp.domain.evidence import Claim
 from opp.domain.lead import Kill, Lead
+from opp.domain.opportunity import ShallowScore
+from opp.observability.cost import cost_ledger
+from opp.orchestration.budget import StageMinimums, minimum_to_finish
 from opp.orchestration.stages import discovery_signal
+from opp.reporting.partial import render_brief
 
 
 def format_leads(sessions: sessionmaker[Session], run_id: UUID) -> str:
@@ -110,8 +116,11 @@ def _claim_line(claim: Claim) -> str:
     return f"{claim.statement}  ({claim.type.value}, {claim.confidence.value})"
 
 
-def format_run_summary(sessions: sessionmaker[Session], run_id: UUID) -> str:
-    """One line per discovery agent, then the run's state, cost and last transition."""
+def format_run_summary(
+    sessions: sessionmaker[Session], run_id: UUID, minimums: StageMinimums | None = None
+) -> str:
+    """One line per discovery agent, then the run's state, cost and last transition, and
+    what the operator can do next."""
     with sessions() as session:
         run = RunRepository(session).get(run_id)
         if run is None:
@@ -124,6 +133,12 @@ def format_run_summary(sessions: sessionmaker[Session], run_id: UUID) -> str:
         agent_runs = [
             ar for stage in stages for ar in AgentRunRepository(session).list_for_stage(stage.id)
         ]
+        has_report = bool(ReportRepository(session).list_for_run(run_id))
+        to_finish = (
+            minimum_to_finish(StageRepository(session).list_for_run(run_id), minimums)
+            if minimums is not None and not run.is_terminal
+            else None
+        )
 
     lines = []
     for agent_run in sorted(agent_runs, key=lambda ar: ar.agent_name):
@@ -141,6 +156,114 @@ def format_run_summary(sessions: sessionmaker[Session], run_id: UUID) -> str:
         + f". Total cost ${run.cost_to_date_usd:.4f} of ${run.budget_ceiling_usd:.2f}."
         + f" Run id: {run.id}"
     )
-    if not run.is_terminal:
+    if to_finish is not None:
+        lines.append(
+            f"The rest of the funnel needs at least ${to_finish:.2f}; "
+            f"${run.remaining_budget_usd:.2f} is left."
+        )
+    if run.status is RunStatus.AWAITING_CHECKPOINT:
+        lines.append(f"Waiting at the checkpoint. Review and decide with: opp checkpoint {run.id}")
+    elif not run.is_terminal:
         lines.append(f"Continue it with: opp resume {run.id}")
+    if has_report and run.status is not RunStatus.COMPLETED:
+        lines.append(f"Incomplete-run report: opp report {run.id}")
     return "\n".join(lines)
+
+
+def format_checkpoint(sessions: sessionmaker[Session], run_id: UUID) -> str:
+    """The checkpoint view (specs.md §2.7): the ranked shortlist with rough scores and a
+    one-line rationale each, and the commands to approve, re-pick or veto."""
+    with sessions() as session:
+        run = RunRepository(session).get(run_id)
+        if run is None:
+            return f"No run {run_id}."
+        scored = [
+            o for o in OpportunityRepository(session).list(run_id=run_id) if o.shallow is not None
+        ]
+        ledger = cost_ledger(session, run)
+    if run.status is not RunStatus.AWAITING_CHECKPOINT:
+        decided = ""
+        if run.checkpoint is not None:
+            decided = f" Checkpoint decision: {run.checkpoint.action.value}" + (
+                f" ({run.checkpoint.reason})" if run.checkpoint.reason else ""
+            )
+        return f"Run {run.id} is {run.status.value}, not waiting at the checkpoint.{decided}"
+    scored.sort(key=lambda o: o.shallow.rank or 0)  # type: ignore[union-attr]
+    lines = [
+        f"Run {run.id} is waiting at the checkpoint. "
+        f"Spent ${ledger.spent_usd:.4f} of ${ledger.ceiling_usd:.2f}; "
+        f"${ledger.remaining_usd:.2f} left for deep research onward.",
+        "",
+        "Shortlist (rough provisional scores; the composite ranks, it is not a verdict):",
+    ]
+    for opportunity in scored:
+        shallow = opportunity.shallow
+        assert shallow is not None
+        lines += [
+            f"  #{shallow.rank} {opportunity.title}  composite {shallow.composite:.2f} "
+            f"[{shallow.weights_ref}]",
+            f"      opportunity {opportunity.id}",
+        ]
+        if opportunity.customer.segment:
+            lines.append(f"      customer: {opportunity.customer.segment.statement}")
+        if opportunity.problem.description:
+            lines.append(f"      pain:     {opportunity.problem.description.statement}")
+        lines.append(f"      why:      {_rationale(shallow)}")
+    lines += [
+        "",
+        "Decide (a re-pick or veto needs a one-line reason):",
+        f"  opp checkpoint {run.id} --approve",
+        f'  opp checkpoint {run.id} --pick OPPORTUNITY_ID --reason "..."',
+        f'  opp checkpoint {run.id} --veto --reason "..."',
+    ]
+    return "\n".join(lines)
+
+
+def _rationale(shallow: ShallowScore) -> str:
+    """One line: the strongest and weakest scored dimensions."""
+    ranked = sorted(shallow.dimension_scores, key=lambda s: (-s.score, s.dimension.value))
+    best = ", ".join(f"{s.dimension.value} {s.score}" for s in ranked[:2])
+    worst = ", ".join(f"{s.dimension.value} {s.score}" for s in reversed(ranked[-2:]))
+    return f"strongest {best}; weakest {worst}"
+
+
+def format_cost(sessions: sessionmaker[Session], run_id: UUID, minimums: StageMinimums) -> str:
+    """The budget meter: spend vs. ceiling, rolled up by stage, call kind and agent."""
+    with sessions() as session:
+        run = RunRepository(session).get(run_id)
+        if run is None:
+            return f"No run {run_id}."
+        ledger = cost_ledger(session, run)
+        to_finish = minimum_to_finish(StageRepository(session).list_for_run(run_id), minimums)
+    lines = [
+        f"Run {run.id}  status={run.status.value}",
+        f"Spent ${ledger.spent_usd:.4f} of ${ledger.ceiling_usd:.2f} "
+        f"({ledger.used_fraction:.0%}); ${ledger.remaining_usd:.2f} left",
+    ]
+    for title, amounts in (("By stage", ledger.by_stage), ("By agent", ledger.by_agent)):
+        if amounts:
+            lines.append(f"{title}:")
+            lines += [f"  {name}: ${cost:.4f}" for name, cost in sorted(amounts.items())]
+    if ledger.by_kind:
+        lines.append("By call kind:")
+        lines += [
+            f"  {kind}: ${cost:.4f} ({ledger.calls.get(kind, 0)} call(s))"
+            for kind, cost in sorted(ledger.by_kind.items())
+        ]
+    if ledger.failed_calls:
+        lines.append(f"Failed calls (still metered): {ledger.failed_calls}")
+    if not run.is_terminal:
+        lines.append(f"The rest of the funnel needs at least ${to_finish:.2f}.")
+    return "\n".join(lines)
+
+
+def format_report(sessions: sessionmaker[Session], run_id: UUID) -> str:
+    """The run's latest report: the incomplete-run brief, or the stored brief as JSON."""
+    with sessions() as session:
+        reports = ReportRepository(session).list_for_run(run_id)
+    if not reports:
+        return ""
+    report = max(reports, key=lambda r: r.created_at)
+    if report.incomplete:
+        return render_brief(report)
+    return json.dumps(report.brief, indent=2)

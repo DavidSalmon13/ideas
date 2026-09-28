@@ -3,11 +3,27 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from opp.domain.enums import StageName
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 SearchProviderName = Literal["tavily"]
+
+# What each stage must have left in the run budget before it may start (specs.md §21.2's
+# target allocation, lower ends; red-team + judge share $2-3). Their sum is the pre-flight
+# minimum a run's ceiling must cover: $15.50 of the default $20, the rest is reserve.
+DEFAULT_STAGE_MINIMUMS_USD: dict[StageName, float] = {
+    StageName.DISCOVERY: 3.0,
+    StageName.SCREENING: 0.5,
+    StageName.SHALLOW_VALIDATION: 3.0,
+    StageName.DEEP_RESEARCH: 5.0,
+    StageName.SYNTHESIS: 1.0,
+    StageName.STRATEGY: 1.0,
+    StageName.RED_TEAM: 1.0,
+    StageName.EVALUATION: 1.0,
+}
 
 
 class Settings(BaseSettings):
@@ -57,6 +73,19 @@ class Settings(BaseSettings):
     shallow_max_cost_usd: float = Field(default=3.0, gt=0)
     shallow_max_searches: int = Field(default=6, ge=0)
     shallow_max_llm_calls: int = Field(default=8, ge=1)
+
+    # Budget pre-checks (plan.md §22): per-stage minimums, as JSON in the environment,
+    # e.g. OPP_STAGE_MINIMUMS_USD='{"deep_research": 6}'. Stages left out keep the default.
+    stage_minimums_usd: dict[StageName, float] = Field(
+        default_factory=lambda: dict(DEFAULT_STAGE_MINIMUMS_USD)
+    )
+
+    @field_validator("stage_minimums_usd")
+    @classmethod
+    def _fill_minimums(cls, value: dict[StageName, float]) -> dict[StageName, float]:
+        if any(amount < 0 for amount in value.values()):
+            raise ValueError("stage minimums can't be negative")
+        return {**DEFAULT_STAGE_MINIMUMS_USD, **value}
 
     # Recovery scan (plan.md §10): a working run not updated for this long is assumed to
     # have lost its process and is continued by `opp recover`.

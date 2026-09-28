@@ -12,7 +12,7 @@ It optimizes for the chain **Evidence → Opportunity → Validation → Economi
 
 ## Status
 
-Design complete; implementation in progress (Phases 0–3 done, Phase 4 under way; the checklist in [`plan.md`](./plan.md) §35 is the live status). The design is captured across three documents (read in order):
+Design complete; implementation in progress (Phases 0–4 done, Phase 5 next; the checklist in [`plan.md`](./plan.md) §35 is the live status). The design is captured across three documents (read in order):
 
 1. **[`intent.md`](./intent.md)** — product & engineering *intent* (the WHAT and WHY): vision, principles, agent architecture, evaluation framework, constraints. The source of truth.
 2. **[`specs.md`](./specs.md)** — the implementation-ready *product specification* (the detailed HOW-it-behaves): UX, inputs, data models, agent contracts, run lifecycle, failure handling, MVP scope, and testable acceptance criteria.
@@ -33,7 +33,17 @@ uv run opp discover --industry HVAC --leads 20
 uv run opp leads <run-id>            # show a run's leads and shortlist again later
 uv run opp resume <run-id>           # continue a killed/crashed or budget-halted run
 uv run opp resume <run-id> --budget 25   # ...raising its ceiling (top-up)
+# A run's ceiling must cover the per-stage minimums ($15.50 by default; OPP_STAGE_MINIMUMS_USD),
+# and a stage the remaining budget can't afford is never started: the run halts instead.
 uv run opp recover                   # startup scan: continue runs a dead process left behind
+
+# The checkpoint: review the ranked shortlist, then approve, re-pick or veto.
+uv run opp checkpoint <run-id>
+uv run opp checkpoint <run-id> --approve
+uv run opp checkpoint <run-id> --pick <opportunity-id> --reason "loved the automation angle"
+uv run opp checkpoint <run-id> --veto --reason "too much manual sales"
+uv run opp cost <run-id>             # budget meter: spend by stage, agent and call kind
+uv run opp report <run-id>           # latest report ("INCOMPLETE — halted at stage X" if it stopped short)
 
 # Offline, from a recorded cassette (no keys needed); --cassette-mode record saves one.
 uv run opp discover --industry HVAC --cassette path/to/cassette.json

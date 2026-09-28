@@ -68,7 +68,12 @@ def sessions(tmp_path: Path) -> Iterator[sessionmaker[Session]]:
     engine.dispose()
 
 
-def orchestrator(sessions: sessionmaker[Session], *handlers: FakeStage) -> Orchestrator:
+def orchestrator(
+    sessions: sessionmaker[Session],
+    *handlers: FakeStage,
+    minimums: dict[StageName, float] | None = None,
+) -> Orchestrator:
+    """Fake stages spend little, so budget pre-checks are off unless ``minimums`` is set."""
     services = StageServices(
         sessions=sessions,
         gateway=None,  # type: ignore[arg-type]
@@ -76,6 +81,7 @@ def orchestrator(sessions: sessionmaker[Session], *handlers: FakeStage) -> Orche
         sink=lambda trace: None,
         search_cost_estimate_usd=0.0,
         discovery_budget=ResearchBudget(),
+        stage_minimums_usd=minimums or {},
     )
     table: dict[StageName, StageHandler] = {h.name: h for h in handlers}
     return Orchestrator(services, table)
