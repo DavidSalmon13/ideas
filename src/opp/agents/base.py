@@ -20,7 +20,7 @@ from opp.agents.memory import AgentMemory, fold
 from opp.domain.enums import AgentRunStatus, ModelTier, StageName
 from opp.domain.evidence import Claim, Source
 from opp.domain.lead import Kill, Lead
-from opp.domain.opportunity import Opportunity
+from opp.domain.opportunity import Opportunity, ResearchSynthesis
 from opp.domain.run import RunConfig
 from opp.llm.gateway import CallContext, LLMError, LLMGateway, LLMResult
 from opp.llm.pricing import CHARS_PER_TOKEN
@@ -61,6 +61,9 @@ class SubTaskResult:
     kills: list[Kill] = field(default_factory=list)
     # Loose claims are filed under this opportunity when set.
     opportunity_id: UUID | None = None
+    # Synthesis's consolidated picture, stored on ``opportunity_id`` without pruning the
+    # loose deep-research claims the specialists filed there (see EvidenceStore).
+    synthesis: ResearchSynthesis | None = None
     note: str = ""
     follow_up_tasks: list[str] = field(default_factory=list)
 

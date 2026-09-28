@@ -51,12 +51,14 @@ from opp.domain.opportunity import Opportunity
 from opp.domain.run import CheckpointDecision, ResearchRun, RunConfig, RunTransition, Stage
 from opp.orchestration.budget import minimum_to_finish, precheck, preflight
 from opp.orchestration.stages import (
+    DeepResearchStage,
     DiscoveryStage,
     ShallowValidationStage,
     StageContext,
     StageHandler,
     StageResult,
     StageServices,
+    SynthesisStage,
     TriageStage,
 )
 from opp.orchestration.state_machine import (
@@ -111,6 +113,8 @@ def default_handlers(services: StageServices) -> dict[StageName, StageHandler]:
         StageName.DISCOVERY: DiscoveryStage(services),
         StageName.SCREENING: TriageStage(services),
         StageName.SHALLOW_VALIDATION: ShallowValidationStage(services),
+        StageName.DEEP_RESEARCH: DeepResearchStage(services),
+        StageName.SYNTHESIS: SynthesisStage(services),
     }
 
 

@@ -20,10 +20,11 @@ from opp.db.repositories import (
     OpportunityRepository,
     SourceRepository,
 )
+from opp.domain.base import utcnow
 from opp.domain.enums import DedupStatus, FailedGate, KillSubject, LeadStatus
 from opp.domain.evidence import Claim, Source
 from opp.domain.lead import Kill, Lead
-from opp.domain.opportunity import Opportunity
+from opp.domain.opportunity import Opportunity, ResearchSynthesis
 from opp.evidence.dedup import (
     NEAR_DUPLICATE_THRESHOLD,
     DuplicatePair,
@@ -198,6 +199,20 @@ class EvidenceStore:
             self._claims.upsert(claim, opportunity_id=opportunity.id)
         self._claims.prune_opportunity(opportunity.id, keep=(claim.id for claim in claims))
         return opportunity, report
+
+    def save_synthesis(
+        self, opportunity_id: UUID, synthesis: ResearchSynthesis
+    ) -> Opportunity | None:
+        """Attach Synthesis's picture to the opportunity without pruning its claims: the
+        deep-research claims are stored loose (keyed by the opportunity) and don't live in
+        the opportunity document, so ``save_opportunity`` would delete them."""
+        opportunity = self._opportunities.get(opportunity_id)
+        if opportunity is None:
+            return None
+        opportunity.synthesis = synthesis
+        opportunity.updated_at = utcnow()
+        self._opportunities.upsert(opportunity)
+        return opportunity
 
     def index_opportunity(
         self, opportunity: Opportunity, status: DedupStatus = DedupStatus.ACTIVE

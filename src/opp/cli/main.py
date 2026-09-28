@@ -262,6 +262,18 @@ def _services(
             max_llm_calls=settings.shallow_max_llm_calls,
             max_fetches=0,
         ),
+        specialist_budget=ResearchBudget(
+            max_cost_usd=settings.specialist_max_cost_usd,
+            max_searches=settings.specialist_max_searches,
+            max_llm_calls=settings.specialist_max_llm_calls,
+            max_fetches=0,
+        ),
+        synthesis_budget=ResearchBudget(
+            max_cost_usd=settings.synthesis_max_cost_usd,
+            max_searches=0,
+            max_llm_calls=settings.synthesis_max_llm_calls,
+            max_fetches=0,
+        ),
     )
 
 

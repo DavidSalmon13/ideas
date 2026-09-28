@@ -74,6 +74,13 @@ class Settings(BaseSettings):
     shallow_max_searches: int = Field(default=6, ge=0)
     shallow_max_llm_calls: int = Field(default=8, ge=1)
 
+    # Deep research: four specialists in parallel (medium tier) and one synthesis pass.
+    specialist_max_cost_usd: float = Field(default=1.5, gt=0)
+    specialist_max_searches: int = Field(default=4, ge=0)
+    specialist_max_llm_calls: int = Field(default=6, ge=1)
+    synthesis_max_cost_usd: float = Field(default=1.0, gt=0)
+    synthesis_max_llm_calls: int = Field(default=3, ge=1)
+
     # Budget pre-checks (plan.md §22): per-stage minimums, as JSON in the environment,
     # e.g. OPP_STAGE_MINIMUMS_USD='{"deep_research": 6}'. Stages left out keep the default.
     stage_minimums_usd: dict[StageName, float] = Field(

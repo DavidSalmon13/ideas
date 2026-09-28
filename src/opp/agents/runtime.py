@@ -260,6 +260,8 @@ class AgentRuntime:
                 )
                 tally.claims += len(claims)
                 tally.demoted += len(report.claim_ids(IssueKind.DEMOTED_UNSOURCED))
+            if output.synthesis is not None and output.opportunity_id is not None:
+                store.save_synthesis(output.opportunity_id, output.synthesis)
             for key, amount in (
                 ("leads", saved_leads),
                 ("claims", len(output.claims)),

@@ -160,6 +160,70 @@ class FunnelLLM(DiscoveryLLM):
         return await super().complete(request)
 
 
+# Synthesis lists each claim as "[n] (axis, type, confidence) ..."; the "(" tells a claim
+# header apart from the "[n] url" items inside the DATA blocks.
+_CLAIM_LINE = re.compile(r"^\[(\d+)\] \(", re.MULTILINE)
+
+
+@dataclass
+class DeepFunnelLLM(FunnelLLM):
+    """Extends the funnel LLM with the deep-research specialists and synthesis: each
+    specialist question yields two sourced findings (snippets 1 and 2), and synthesis
+    reports one contradiction between the first two claims it is shown."""
+
+    async def complete(self, request: CompletionRequest) -> Completion:
+        kind = request.output_type.__name__ if request.output_type else ""
+        if kind == "SpecialistExtraction":
+            self.requests.append(request)
+            findings = [
+                {
+                    "statement": "Owners of 3-truck shops lose hours a week to phone dispatch",
+                    "snippets": [1],
+                    "kind": "fact",
+                    "confidence": "medium",
+                    "confidence_reason": "a forum thread says it directly",
+                },
+                {
+                    "statement": "New refrigerant tracking rules take effect January 2026",
+                    "snippets": [2],
+                    "kind": "fact",
+                    "confidence": "high",
+                    "confidence_reason": "a regulator page states the date",
+                },
+            ]
+            return reply(
+                json.dumps({"findings": findings, "note": "from the snippets"}),
+                model=request.model,
+                input_tokens=1500,
+                output_tokens=600,
+            )
+        if kind == "SynthesisResult":
+            self.requests.append(request)
+            numbers = [int(n) for n in _CLAIM_LINE.findall(request.messages[-1].content)]
+            contradictions = (
+                [
+                    {
+                        "claims": numbers[:2],
+                        "description": "the specialists disagree on when the pain bites hardest",
+                    }
+                ]
+                if len(numbers) >= 2
+                else []
+            )
+            return reply(
+                json.dumps(
+                    {
+                        "summary": "Real, sourced pain among small HVAC shops with a why-now.",
+                        "contradictions": contradictions,
+                    }
+                ),
+                model=request.model,
+                input_tokens=2000,
+                output_tokens=800,
+            )
+        return await super().complete(request)
+
+
 _DIMENSIONS = [
     "revenue_potential",
     "gross_margin",

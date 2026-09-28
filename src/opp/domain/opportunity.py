@@ -174,6 +174,23 @@ class Experiment(Entity):
     priority: int = Field(ge=1, description="1 = run first.")
 
 
+class Contradiction(DomainModel):
+    """A conflict Synthesis found between the specialists' claims (intent.md §7.4, §9.5)."""
+
+    description: str = Field(min_length=1)
+    claim_ids: list[UUID] = Field(default_factory=list, description="The conflicting claims.")
+
+
+class ResearchSynthesis(DomainModel):
+    """Synthesis's consolidated picture of the deep-research findings (specs.md §5.5)."""
+
+    summary: str = ""
+    contradictions: list[Contradiction] = Field(default_factory=list)
+    axes_covered: list[str] = Field(
+        default_factory=list, description="Which specialists produced claims."
+    )
+
+
 class ProvisionalScore(DomainModel):
     """One dimension as shallow validation scored it (plan.md §8 ShallowScore)."""
 
@@ -227,6 +244,9 @@ class Opportunity(Entity):
     # Shallow validation: the provisional score and the claims it gathered to make it.
     shallow: ShallowScore | None = None
     screening_claims: list[Claim] = Field(default_factory=list)
+    # Synthesis's consolidated picture of the deep-research claims (which are stored loose,
+    # keyed by this opportunity, so parallel specialists never clobber each other).
+    synthesis: ResearchSynthesis | None = None
 
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)

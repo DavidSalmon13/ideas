@@ -622,7 +622,7 @@ This is the earliest point the product demonstrates its core value: a grounded, 
 - [x] Checkpoint (CLI) + budget meter + pre-checks + HALTED_BUDGET partials
 
 **Phase 5 — Deep research**
-- [ ] 4 specialists (parallel) + Synthesis + contradictions
+- [x] 4 specialists (parallel) + Synthesis + contradictions
 - [ ] Kickback (≤1/stage) + full Opportunity assembly
 
 **Phase 6 — Strategy + evaluation + report**

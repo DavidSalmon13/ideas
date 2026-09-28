@@ -20,10 +20,13 @@ from opp.agents.budget import ResearchBudget, RunBudget
 from opp.agents.discovery import DiscoveryAgent
 from opp.agents.runtime import AgentRuntime
 from opp.agents.shallow_validation import ShallowValidationAgent, lead_task
+from opp.agents.specialists import AXES, SpecialistAgent
+from opp.agents.synthesis import SynthesisAgent
 from opp.agents.triage import TriageAgent
 from opp.config.settings import DEFAULT_STAGE_MINIMUMS_USD
 from opp.db.repositories import (
     AgentRunRepository,
+    ClaimRepository,
     LeadRepository,
     OpportunityRepository,
     SourceRepository,
@@ -36,8 +39,9 @@ from opp.domain.enums import (
     SignalSource,
     StageName,
 )
-from opp.domain.evidence import Source
+from opp.domain.evidence import Claim, Source
 from opp.domain.lead import Lead
+from opp.domain.opportunity import Opportunity
 from opp.domain.run import AgentRun, ResearchRun, Stage
 from opp.evidence.store import EvidenceStore
 from opp.llm.gateway import LLMGateway
@@ -62,6 +66,17 @@ class StageServices:
     shallow_budget: ResearchBudget = field(
         default_factory=lambda: ResearchBudget(
             max_cost_usd=3.0, max_llm_calls=8, max_searches=6, max_fetches=0
+        )
+    )
+    # Per specialist (four run in parallel; the run budget still caps the total).
+    specialist_budget: ResearchBudget = field(
+        default_factory=lambda: ResearchBudget(
+            max_cost_usd=1.5, max_llm_calls=6, max_searches=4, max_fetches=0
+        )
+    )
+    synthesis_budget: ResearchBudget = field(
+        default_factory=lambda: ResearchBudget(
+            max_cost_usd=1.0, max_llm_calls=3, max_searches=0, max_fetches=0
         )
     )
     # What each stage must have left in the run budget before it may start (plan.md §22).
@@ -288,6 +303,93 @@ class ShallowValidationStage:
         return len(scored)
 
 
+class DeepResearchStage:
+    """The four specialists research the one selected opportunity in parallel, under the
+    shared run budget (specs.md §5.4). Each files its axis claims loose under the
+    opportunity, so the parallel runs never overwrite one another."""
+
+    name = StageName.DEEP_RESEARCH
+
+    def __init__(self, services: StageServices) -> None:
+        self._services = services
+
+    async def run(self, ctx: StageContext) -> StageOutcome:
+        opportunity = _selected_opportunity(self._services.sessions, ctx.run)
+        if opportunity is None:
+            return StageOutcome(StageResult.NO_CANDIDATES, 0.0, "no opportunity was selected")
+        names = [axis.agent_name for axis in AXES]
+        agent_runs = {
+            ar.agent_name: ar
+            for ar in _agent_runs(self._services.sessions, ctx.stage, names, ModelTier.MEDIUM)
+        }
+        runtime = self._services.runtime()
+        results = await asyncio.gather(
+            *(
+                runtime.run(
+                    SpecialistAgent(axis, opportunity),
+                    agent_runs[axis.agent_name].id,
+                    budget=self._services.specialist_budget,
+                    run_budget=ctx.run_budget,
+                    should_stop=ctx.should_stop,
+                )
+                for axis in AXES
+            )
+        )
+        return outcome_of(list(results))
+
+
+class SynthesisStage:
+    """Merges the specialists' claims into one picture and surfaces their contradictions
+    (specs.md §5.5). Reads the opportunity's deep-research claims and reconciles them."""
+
+    name = StageName.SYNTHESIS
+
+    def __init__(self, services: StageServices) -> None:
+        self._services = services
+
+    async def run(self, ctx: StageContext) -> StageOutcome:
+        opportunity = _selected_opportunity(self._services.sessions, ctx.run)
+        if opportunity is None:
+            return StageOutcome(StageResult.NO_CANDIDATES, 0.0, "no opportunity was selected")
+        claims, sources = _deep_research_claims(self._services.sessions, opportunity.id)
+        [agent_run] = _agent_runs(
+            self._services.sessions, ctx.stage, [SynthesisAgent.name], ModelTier.MEDIUM
+        )
+        result = await self._services.runtime().run(
+            SynthesisAgent(opportunity, claims, sources),
+            agent_run.id,
+            budget=self._services.synthesis_budget,
+            run_budget=ctx.run_budget,
+            should_stop=ctx.should_stop,
+        )
+        return outcome_of([result])
+
+
+def _selected_opportunity(sessions: sessionmaker[Session], run: ResearchRun) -> Opportunity | None:
+    if run.selected_opportunity_id is None:
+        return None
+    with sessions() as session:
+        return OpportunityRepository(session).get(run.selected_opportunity_id)
+
+
+def _deep_research_claims(
+    sessions: sessionmaker[Session], opportunity_id: UUID
+) -> tuple[list[Claim], dict[UUID, Source]]:
+    """The opportunity's loose deep-research claims (best-effort stable order) and the
+    sources they cite."""
+    with sessions() as session:
+        claims = [
+            claim
+            for claim in ClaimRepository(session).list_for_opportunity(opportunity_id)
+            if claim.stage == StageName.DEEP_RESEARCH.value
+        ]
+        claims.sort(key=lambda c: (c.agent or "", c.observed_at, str(c.id)))
+        sources = SourceRepository(session).get_many(
+            {sid for claim in claims for sid in claim.source_ids}
+        )
+    return claims, sources
+
+
 def _leads_and_sources(
     sessions: sessionmaker[Session], run_id: UUID
 ) -> tuple[dict[UUID, Lead], dict[UUID, Source]]:
@@ -299,7 +401,12 @@ def _leads_and_sources(
     return leads, sources
 
 
-def _agent_runs(sessions: sessionmaker[Session], stage: Stage, names: list[str]) -> list[AgentRun]:
+def _agent_runs(
+    sessions: sessionmaker[Session],
+    stage: Stage,
+    names: list[str],
+    model_tier: ModelTier = ModelTier.CHEAP,
+) -> list[AgentRun]:
     """The stage's agent runs by name, created on first entry (reused on resume)."""
     with sessions() as session:
         repo = AgentRunRepository(session)
@@ -308,7 +415,7 @@ def _agent_runs(sessions: sessionmaker[Session], stage: Stage, names: list[str])
         for name in names:
             if name not in existing:
                 existing[name] = repo.add(
-                    AgentRun(stage_id=stage.id, agent_name=name, model_tier=ModelTier.CHEAP)
+                    AgentRun(stage_id=stage.id, agent_name=name, model_tier=model_tier)
                 )
             runs.append(existing[name])
         session.commit()
