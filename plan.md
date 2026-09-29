@@ -632,7 +632,8 @@ This is the earliest point the product demonstrates its core value: a grounded, 
 - [x] **Milestone M1 reached**
 
 **Phase 7 — Web UI**
-- [ ] SSE progress; New Run, Run Progress, Checkpoint, Opportunity Detail, Evidence Explorer, Library
+- [x] REST + SSE API layer (runs, checkpoint, leads, opportunities, evidence, report, profiles/config) over the engine
+- [ ] React SPA: New Run, Run Progress, Checkpoint, Opportunity Detail, Evidence Explorer, Library
 
 **Phase 8 — Quality**
 - [ ] Unit/integration/contract/e2e tests on cassettes

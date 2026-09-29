@@ -93,6 +93,9 @@ class RunRepository(DocRepository[ResearchRun, models.RunRow]):
             data=obj.model_dump(mode="json"),
         )
 
+    def list_all(self) -> list[ResearchRun]:
+        return self._all(select(models.RunRow))
+
     def list_by_status(self, status: RunStatus) -> list[ResearchRun]:
         return self._all(select(models.RunRow).where(models.RunRow.status == status.value))
 

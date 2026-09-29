@@ -35,7 +35,6 @@ from uuid import UUID
 from sqlalchemy import inspect
 from sqlalchemy.orm import Session, sessionmaker
 
-from opp.agents.budget import ResearchBudget
 from opp.cassettes.cassette import Cassette, CassetteMode
 from opp.cassettes.providers import CassetteLLMProvider, CassetteSearchProvider
 from opp.cli.discover import (
@@ -57,6 +56,7 @@ from opp.observability.traces import DbTraceSink
 from opp.orchestration.budget import BudgetPreflightError
 from opp.orchestration.orchestrator import CheckpointError, Orchestrator, ResumeError
 from opp.orchestration.stages import StageServices
+from opp.orchestration.wiring import build_stage_services
 from opp.research.cache import CachedSearchProvider
 from opp.research.factory import SearchConfigError, build_search_provider
 from opp.research.search import SearchProvider
@@ -251,43 +251,12 @@ def _services(
 ) -> StageServices:
     llm, search = _providers(settings, sessions, cassette)
     sink = DbTraceSink(sessions)
-    return StageServices(
+    return build_stage_services(
+        settings,
         sessions=sessions,
-        stage_minimums_usd=settings.stage_minimums_usd,
         gateway=build_gateway(settings, sink, provider=llm),
         search=search,
         sink=sink,
-        discovery_budget=ResearchBudget(
-            max_cost_usd=settings.discovery_max_cost_usd,
-            max_searches=settings.discovery_max_searches,
-            max_llm_calls=settings.discovery_max_llm_calls,
-            max_fetches=0,
-        ),
-        search_cost_estimate_usd=settings.search_cost_per_call_usd,
-        triage_budget=ResearchBudget(
-            max_cost_usd=settings.triage_max_cost_usd,
-            max_llm_calls=settings.triage_max_llm_calls,
-            max_searches=0,
-            max_fetches=0,
-        ),
-        shallow_budget=ResearchBudget(
-            max_cost_usd=settings.shallow_max_cost_usd,
-            max_searches=settings.shallow_max_searches,
-            max_llm_calls=settings.shallow_max_llm_calls,
-            max_fetches=0,
-        ),
-        specialist_budget=ResearchBudget(
-            max_cost_usd=settings.specialist_max_cost_usd,
-            max_searches=settings.specialist_max_searches,
-            max_llm_calls=settings.specialist_max_llm_calls,
-            max_fetches=0,
-        ),
-        synthesis_budget=ResearchBudget(
-            max_cost_usd=settings.synthesis_max_cost_usd,
-            max_searches=0,
-            max_llm_calls=settings.synthesis_max_llm_calls,
-            max_fetches=0,
-        ),
     )
 
 

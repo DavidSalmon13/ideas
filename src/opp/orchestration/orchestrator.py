@@ -153,23 +153,32 @@ class Orchestrator:
     async def start(self, run_config: RunConfig) -> RunOutcome:
         return await self.advance(self.create_run(run_config).id)
 
-    async def resume(self, run_id: UUID, *, budget_ceiling_usd: float | None = None) -> RunOutcome:
-        """Continue a halted or interrupted run from its current stage."""
+    def validate_resume(self, run_id: UUID, *, budget_ceiling_usd: float | None = None) -> None:
+        """Read-only pre-check for :meth:`resume`, raising ``ResumeError`` on a run that
+        can't be resumed or a top-up that leaves nothing. Lets a caller (the API) reject a
+        bad request before launching the resume."""
         with self._sessions() as session:
-            runs = RunRepository(session)
-            run = runs.get(run_id)
+            run = RunRepository(session).get(run_id)
             if run is None:
                 raise ResumeError(f"no run {run_id}")
             if run.is_terminal:
                 raise ResumeError(f"run {run_id} already ended ({run.status.value})")
             if run.status is RunStatus.AWAITING_CHECKPOINT:
                 raise ResumeError(f"run {run_id} is waiting at the checkpoint for a decision")
-            spent = _spent(session, run)
             if budget_ceiling_usd is not None:
+                spent = _spent(session, run)
                 if budget_ceiling_usd <= spent:
                     raise ResumeError(
                         f"a ${budget_ceiling_usd:.2f} ceiling leaves nothing: ${spent:.4f} is spent"
                     )
+
+    async def resume(self, run_id: UUID, *, budget_ceiling_usd: float | None = None) -> RunOutcome:
+        """Continue a halted or interrupted run from its current stage."""
+        self.validate_resume(run_id, budget_ceiling_usd=budget_ceiling_usd)
+        with self._sessions() as session:
+            runs = RunRepository(session)
+            run = _get(session, run_id)
+            if budget_ceiling_usd is not None:
                 run.run_config = run.run_config.model_copy(
                     update={"budget_ceiling_usd": budget_ceiling_usd}
                 )
@@ -204,18 +213,17 @@ class Orchestrator:
         with self._sessions() as session:
             return _shortlist(session, run_id)
 
-    async def checkpoint(
+    def _resolve_checkpoint(
         self,
         run_id: UUID,
         action: CheckpointAction,
-        *,
-        opportunity_id: UUID | None = None,
-        reason: str | None = None,
-    ) -> RunOutcome:
-        """Apply the operator's checkpoint decision (specs.md §2.7). ``APPROVE`` takes the
-        top-ranked candidate; ``PICK`` takes ``opportunity_id`` (a runner-up needs a
-        one-line reason); ``VETO`` rejects the whole shortlist (with a reason) and ends the
-        run partial. Approve and pick continue the run into deep research."""
+        opportunity_id: UUID | None,
+        reason: str | None,
+    ) -> tuple[CheckpointDecision, list[Opportunity]]:
+        """Validate and normalise a checkpoint decision (specs.md §2.7) against the run's
+        state and shortlist, raising ``CheckpointError`` if it can't be applied. Picking the
+        top-ranked candidate is normalised to an approve; approve/veto reasons are enforced
+        by ``CheckpointDecision``. Read-only — used by both ``checkpoint`` and its pre-check."""
         with self._sessions() as session:
             run = RunRepository(session).get(run_id)
             if run is None:
@@ -245,7 +253,33 @@ class Orchestrator:
         except ValidationError as exc:
             message = exc.errors()[0]["msg"].removeprefix("Value error, ")
             raise CheckpointError(message) from exc
+        return decision, shortlist
 
+    def validate_checkpoint(
+        self,
+        run_id: UUID,
+        action: CheckpointAction,
+        *,
+        opportunity_id: UUID | None = None,
+        reason: str | None = None,
+    ) -> None:
+        """Read-only pre-check for :meth:`checkpoint`; raises ``CheckpointError`` on a
+        decision that can't be applied, so the API can reject it before launching the run."""
+        self._resolve_checkpoint(run_id, action, opportunity_id, reason)
+
+    async def checkpoint(
+        self,
+        run_id: UUID,
+        action: CheckpointAction,
+        *,
+        opportunity_id: UUID | None = None,
+        reason: str | None = None,
+    ) -> RunOutcome:
+        """Apply the operator's checkpoint decision (specs.md §2.7). ``APPROVE`` takes the
+        top-ranked candidate; ``PICK`` takes ``opportunity_id`` (a runner-up needs a
+        one-line reason); ``VETO`` rejects the whole shortlist (with a reason) and ends the
+        run partial. Approve and pick continue the run into deep research."""
+        decision, shortlist = self._resolve_checkpoint(run_id, action, opportunity_id, reason)
         if decision.action is CheckpointAction.VETO:
             self._transition(
                 run_id,
