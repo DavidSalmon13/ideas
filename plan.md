@@ -641,7 +641,7 @@ This is the earliest point the product demonstrates its core value: a grounded, 
 - [x] Observability polish + **cost calibration ≤ $20**
 
 **Phase 9 — Hardening + deploy + V1**
-- [ ] Security review (SSRF/injection); restart/resume soak
+- [x] Security review (SSRF/injection); restart/resume soak
 - [ ] Single-container deploy + docs
 - [ ] V1: promote/refresh/compare, preference learning + exploration allowance, second-profile UI, optional auth
 ```
