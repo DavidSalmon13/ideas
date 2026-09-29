@@ -6,6 +6,7 @@ import { RunLeads } from './pages/RunLeads'
 import { Checkpoint } from './pages/Checkpoint'
 import { OpportunityDetail } from './pages/OpportunityDetail'
 import { EvidenceExplorer } from './pages/EvidenceExplorer'
+import { Compare } from './pages/Compare'
 
 export function App() {
   return (
@@ -18,6 +19,7 @@ export function App() {
         <Route path="/runs/:id/checkpoint" element={<Checkpoint />} />
         <Route path="/opportunities/:id" element={<OpportunityDetail />} />
         <Route path="/opportunities/:id/evidence" element={<EvidenceExplorer />} />
+        <Route path="/compare" element={<Compare />} />
       </Routes>
     </main>
   )

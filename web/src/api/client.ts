@@ -1,6 +1,7 @@
 // Typed fetch wrapper over the engine's REST API. Errors come back as RFC-7807
 // problem+json (src/opp/api/errors.py); ApiError carries the status and detail.
 import type {
+  ComparisonResponse,
   ConfigResponse,
   CreateRunRequest,
   EvidenceResponse,
@@ -76,4 +77,6 @@ export const api = {
     request<ReportResponse>('GET', `/opportunities/${id}/report`),
   setOpportunityStatus: (id: string, status: string) =>
     request<Record<string, unknown>>('PATCH', `/opportunities/${id}`, { status }),
+  compare: (ids: string[]) =>
+    request<ComparisonResponse>('POST', '/compare', { opportunity_ids: ids }),
 }

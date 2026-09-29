@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api/client'
 import { useAsync } from '../hooks/useAsync'
@@ -7,6 +8,10 @@ import { Chip, ErrorBox, Loading, Section, verdictTone } from '../components/ui'
 export function Library() {
   const runs = useAsync(() => api.listRuns(), [])
   const opps = useAsync(() => api.listOpportunities(), [])
+  const [selected, setSelected] = useState<string[]>([])
+
+  const toggle = (id: string) =>
+    setSelected((ids) => (ids.includes(id) ? ids.filter((i) => i !== id) : [...ids, id]))
 
   return (
     <div className="stack">
@@ -66,36 +71,59 @@ export function Library() {
           <p className="muted">No opportunities yet — start a run.</p>
         )}
         {opps.data && opps.data.length > 0 && (
-          <table>
-            <thead>
-              <tr>
-                <th>Title</th>
-                <th>Shape</th>
-                <th>Verdict</th>
-                <th>Score</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {opps.data.map((opp) => (
-                <tr key={opp.id}>
-                  <td>
-                    <Link to={`/opportunities/${opp.id}`}>{opp.title}</Link>
-                  </td>
-                  <td>{opp.business_shape}</td>
-                  <td>
-                    {opp.verdict ? (
-                      <Chip text={opp.verdict} tone={verdictTone(opp.verdict)} />
-                    ) : (
-                      <span className="muted">—</span>
-                    )}
-                  </td>
-                  <td>{opp.composite != null ? opp.composite.toFixed(2) : '—'}</td>
-                  <td>{opp.status}</td>
+          <>
+            <div className="row-between">
+              <span className="muted">{selected.length} selected</span>
+              {selected.length >= 2 ? (
+                <Link className="btn" to={`/compare?ids=${selected.join(',')}`}>
+                  Compare selected
+                </Link>
+              ) : (
+                <button className="btn" disabled>
+                  Compare selected
+                </button>
+              )}
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th />
+                  <th>Title</th>
+                  <th>Shape</th>
+                  <th>Verdict</th>
+                  <th>Score</th>
+                  <th>Status</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {opps.data.map((opp) => (
+                  <tr key={opp.id}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${opp.title}`}
+                        checked={selected.includes(opp.id)}
+                        onChange={() => toggle(opp.id)}
+                      />
+                    </td>
+                    <td>
+                      <Link to={`/opportunities/${opp.id}`}>{opp.title}</Link>
+                    </td>
+                    <td>{opp.business_shape}</td>
+                    <td>
+                      {opp.verdict ? (
+                        <Chip text={opp.verdict} tone={verdictTone(opp.verdict)} />
+                      ) : (
+                        <span className="muted">—</span>
+                      )}
+                    </td>
+                    <td>{opp.composite != null ? opp.composite.toFixed(2) : '—'}</td>
+                    <td>{opp.status}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
         )}
       </Section>
     </div>

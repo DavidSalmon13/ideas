@@ -13,6 +13,7 @@ import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from opp.api.compare import router as compare_router
 from opp.api.engine import Engine, build_engine
 from opp.api.errors import register_error_handlers
 from opp.api.meta import router as meta_router
@@ -71,6 +72,7 @@ def create_app() -> FastAPI:
 
     app.include_router(runs_router)
     app.include_router(opportunities_router)
+    app.include_router(compare_router)
     app.include_router(meta_router)
 
     # Serve the built SPA in the single-container deploy, if a build is present.

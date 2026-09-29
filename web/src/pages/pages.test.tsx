@@ -9,6 +9,7 @@ import { NewRun } from './NewRun'
 import { Checkpoint } from './Checkpoint'
 import { RunProgress } from './RunProgress'
 import { EvidenceExplorer } from './EvidenceExplorer'
+import { Compare } from './Compare'
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -251,5 +252,98 @@ describe('EvidenceExplorer', () => {
     await userEvent.selectOptions(screen.getByLabelText('type'), 'fact')
     expect(screen.getByText('1 of 2 claims')).toBeInTheDocument()
     expect(screen.queryByText('They would switch quickly')).not.toBeInTheDocument()
+  })
+})
+
+describe('Compare', () => {
+  it('renders a side-by-side of verdicts, metrics and dimension scores', async () => {
+    mockFetch((method, path, body) => {
+      if (method === 'POST' && path === '/compare') {
+        expect(body).toEqual({ opportunity_ids: ['a', 'b'] })
+        return {
+          dimensions: ['revenue_potential', 'gross_margin'],
+          columns: [
+            {
+              id: 'a',
+              title: 'Dispatch board',
+              business_shape: 'saas',
+              status: 'new',
+              verdict: 'promising_but_unproven',
+              composite: 4.0,
+              dimension_scores: { revenue_potential: 4, gross_margin: 3 },
+              min_viable_team: 1,
+              can_one_person_start: 'A single founder can start this.',
+              metrics: [
+                { key: 'gross_margin', label: 'Gross margin', value: 85, unit: '%', status: 'estimated', confidence: 'medium' },
+              ],
+            },
+            {
+              id: 'b',
+              title: 'Refrigerant tracker',
+              business_shape: 'saas',
+              status: 'new',
+              verdict: 'pursue',
+              composite: 4.2,
+              dimension_scores: { revenue_potential: 5, gross_margin: 4 },
+              min_viable_team: 2,
+              can_one_person_start: null,
+              metrics: [],
+            },
+          ],
+        }
+      }
+      return {}
+    })
+    render(
+      <MemoryRouter initialEntries={['/compare?ids=a,b']}>
+        <Routes>
+          <Route path="/compare" element={<Compare />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    expect(await screen.findByText('Dispatch board')).toBeInTheDocument()
+    expect(screen.getByText('Refrigerant tracker')).toBeInTheDocument()
+    expect(screen.getByText('promising_but_unproven')).toBeInTheDocument()
+    expect(screen.getByText('pursue')).toBeInTheDocument()
+    expect(screen.getByText('85 % (estimated)')).toBeInTheDocument()
+    expect(screen.getByText('A single founder can start this.')).toBeInTheDocument()
+  })
+
+  it('asks for at least two selections when given too few ids', async () => {
+    mockFetch(() => ({}))
+    render(
+      <MemoryRouter initialEntries={['/compare?ids=a']}>
+        <Routes>
+          <Route path="/compare" element={<Compare />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    expect(
+      await screen.findByText('Select at least two opportunities to compare.'),
+    ).toBeInTheDocument()
+  })
+})
+
+describe('Library selection', () => {
+  it('enables Compare selected with the chosen ids once two are picked', async () => {
+    mockFetch((_m, path) => {
+      if (path === '/opportunities')
+        return [
+          { id: 'o1', run_id: 'r1', title: 'One', business_shape: 'saas', status: 'new', verdict: null, composite: null, shallow: null },
+          { id: 'o2', run_id: 'r1', title: 'Two', business_shape: 'saas', status: 'new', verdict: null, composite: null, shallow: null },
+        ]
+      return []
+    })
+    render(
+      <MemoryRouter>
+        <Library />
+      </MemoryRouter>,
+    )
+    await screen.findByText('One')
+    await userEvent.click(screen.getByLabelText('Select One'))
+    await userEvent.click(screen.getByLabelText('Select Two'))
+
+    const link = screen.getByRole('link', { name: 'Compare selected' })
+    expect(link).toHaveAttribute('href', '/compare?ids=o1,o2')
   })
 })

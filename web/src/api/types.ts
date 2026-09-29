@@ -223,3 +223,30 @@ export interface CreateRunRequest {
   lead_targets: { discovery_n: number; shortlist_n: number }
   soft_preferences: string[]
 }
+
+export interface MetricCell {
+  key: string
+  label: string
+  value: number | null
+  unit: string | null
+  status: string
+  confidence: string
+}
+
+export interface ComparisonColumn {
+  id: string
+  title: string
+  business_shape: string
+  status: string
+  verdict: Verdict | null
+  composite: number | null
+  dimension_scores: Record<string, number>
+  min_viable_team: number | null
+  can_one_person_start: string | null
+  metrics: MetricCell[]
+}
+
+export interface ComparisonResponse {
+  dimensions: string[]
+  columns: ComparisonColumn[]
+}

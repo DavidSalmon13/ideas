@@ -268,3 +268,23 @@ select {
   padding: 1rem;
   overflow-x: auto;
 }
+
+/* Comparison table (Compare page). */
+.scroll-x {
+  overflow-x: auto;
+}
+table.compare th.rowhead {
+  text-align: left;
+  white-space: nowrap;
+  color: var(--muted);
+  font-weight: 500;
+}
+table.compare th.rowhead.section {
+  padding-top: 0.9rem;
+  color: var(--fg);
+  font-weight: 600;
+}
+table.compare td,
+table.compare th {
+  vertical-align: top;
+}
