@@ -256,6 +256,13 @@ def format_cost(sessions: sessionmaker[Session], run_id: UUID, minimums: StageMi
         lines.append(f"Failed calls (still metered): {ledger.failed_calls}")
     if not run.is_terminal:
         lines.append(f"The rest of the funnel needs at least ${to_finish:.2f}.")
+    if run.transitions:
+        lines.append("State-transition history (why the run is where it is):")
+        lines += [
+            f"  {t.from_status.value} -> {t.to_status.value}"
+            + (f": {t.reason}" if t.reason else "")
+            for t in run.transitions
+        ]
     return "\n".join(lines)
 
 

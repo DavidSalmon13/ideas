@@ -101,9 +101,7 @@ async def resume_run(run_id: UUID, body: ResumeRequest, engine: EngineDep) -> Ru
 
 
 @router.post("/{run_id}/checkpoint")
-async def decide_checkpoint(
-    run_id: UUID, body: CheckpointRequest, engine: EngineDep
-) -> RunDetail:
+async def decide_checkpoint(run_id: UUID, body: CheckpointRequest, engine: EngineDep) -> RunDetail:
     """Approve the top candidate, re-pick a runner-up, or veto the whole shortlist
     (specs.md §2.7). Approve/pick continue the run in the background; a veto ends it."""
     with engine.sessions() as session:

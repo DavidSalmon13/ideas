@@ -62,9 +62,7 @@ def get_evidence(opportunity_id: UUID, engine: EngineDep) -> EvidenceResponse:
 
 
 @router.get("/{opportunity_id}/report")
-def get_opportunity_report(
-    opportunity_id: UUID, engine: EngineDep
-) -> ReportResponse:
+def get_opportunity_report(opportunity_id: UUID, engine: EngineDep) -> ReportResponse:
     with engine.sessions() as session:
         opp = _require(session, opportunity_id)
         reports = ReportRepository(session).list_for_run(opp.run_id)

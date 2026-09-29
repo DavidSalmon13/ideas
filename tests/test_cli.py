@@ -153,6 +153,22 @@ def test_cli_refuses_to_run_without_tables(capsys: pytest.CaptureFixture[str]) -
     assert "alembic upgrade head" in capsys.readouterr().err
 
 
+def test_cli_calibrate_projects_the_cost_without_a_db_or_keys(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``opp calibrate`` is a pure projection: no tables, no API keys, no calls."""
+    monkeypatch.delenv("OPP_TAVILY_API_KEY", raising=False)
+    monkeypatch.delenv("OPP_ANTHROPIC_API_KEY", raising=False)
+    get_settings.cache_clear()
+    assert main(["calibrate"]) == 0
+    out = capsys.readouterr().out
+    assert "Cost calibration" in out
+    assert "$19.00 of the $20.00 ceiling (within)" in out
+    # A tighter ceiling is flagged as over.
+    assert main(["calibrate", "--budget", "12"]) == 0
+    assert "(OVER)" in capsys.readouterr().out
+
+
 def test_cli_needs_search_configured_without_a_cassette(
     sessions: sessionmaker[Session],
     capsys: pytest.CaptureFixture[str],
@@ -192,11 +208,12 @@ def test_cli_checkpoint_cost_and_incomplete_report(
     assert "#1 " in view and "composite" in view and "strongest" in view
     assert f"opp checkpoint {run_id} --approve" in view
 
-    # The budget meter.
+    # The budget meter, with the run-diagnostics transition history.
     assert main(["cost", run_id]) == 0
     meter = capsys.readouterr().out
     assert "of $20.00" in meter and "By stage:" in meter and "discovery: $" in meter
     assert "The rest of the funnel needs at least $" in meter
+    assert "State-transition history" in meter and "-> awaiting_checkpoint" in meter
 
     # A veto needs a reason; nothing changes without one.
     assert main(["checkpoint", run_id, "--veto", *replay]) == 2

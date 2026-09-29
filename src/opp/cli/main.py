@@ -10,6 +10,7 @@
     opp leads RUN_ID
     opp cost RUN_ID
     opp report RUN_ID
+    opp calibrate [--budget USD]
 
 ``--cassette`` with the default ``replay`` mode runs fully offline from a recording (no
 API keys needed); ``record``/``once`` call the real providers and save what they return.
@@ -24,6 +25,8 @@ A run in the default mandatory mode stops at the checkpoint with a ranked shortl
 research, ``--pick`` a runner-up (``--reason`` required), ``--veto`` rejects them all
 (``--reason`` required). ``cost`` is the budget meter; ``report`` prints the latest report
 (the decision brief for a completed run, an incomplete-run brief when it stopped short).
+``calibrate`` prints the worst-case cost projection of a full run from the configured
+per-agent budgets, so the ≤ $20 ceiling can be checked before any real spend.
 """
 
 import argparse
@@ -48,9 +51,11 @@ from opp.cli.discover import (
 from opp.config.settings import Settings, get_settings
 from opp.db.session import create_db_engine, create_session_factory
 from opp.domain.enums import CheckpointAction, CheckpointMode, RunStatus, SignalSource
+from opp.domain.report import Trace
 from opp.domain.run import DiscoveryScope, LeadTargets, RunConfig
 from opp.llm.factory import build_gateway, build_provider
 from opp.llm.types import LLMProvider
+from opp.observability.calibration import project_cost, render_projection
 from opp.observability.logging import configure_logging
 from opp.observability.traces import DbTraceSink
 from opp.orchestration.budget import BudgetPreflightError
@@ -59,6 +64,7 @@ from opp.orchestration.stages import StageServices
 from opp.orchestration.wiring import build_stage_services
 from opp.research.cache import CachedSearchProvider
 from opp.research.factory import SearchConfigError, build_search_provider
+from opp.research.fake import FakeSearchProvider
 from opp.research.search import SearchProvider
 
 
@@ -124,6 +130,10 @@ def build_parser() -> argparse.ArgumentParser:
     cost.add_argument("run_id", type=UUID)
     report = commands.add_parser("report", help="the latest report of a run")
     report.add_argument("run_id", type=UUID)
+    calibrate = commands.add_parser(
+        "calibrate", help="project the worst-case cost of a full run from the configured budgets"
+    )
+    calibrate.add_argument("--budget", type=float, default=20.0, help="run ceiling to check, USD")
     return parser
 
 
@@ -139,11 +149,17 @@ def main(argv: list[str] | None = None) -> int:
     settings = get_settings()
     configure_logging("INFO" if args.verbose else "WARNING", json=False)
     engine = create_db_engine(settings.database_url)
-    if "runs" not in inspect(engine).get_table_names():
-        print("The database has no tables yet. Run: uv run alembic upgrade head", file=sys.stderr)
-        return 2
     sessions = create_session_factory(engine)
     try:
+        # calibrate is a pure projection over config; it needs no tables.
+        if args.command == "calibrate":
+            print(_calibrate(settings, sessions, ceiling_usd=args.budget))
+            return 0
+        if "runs" not in inspect(engine).get_table_names():
+            print(
+                "The database has no tables yet. Run: uv run alembic upgrade head", file=sys.stderr
+            )
+            return 2
         if args.command == "leads":
             print(format_leads(sessions, args.run_id))
             if shortlist := format_shortlist(sessions, args.run_id):
@@ -244,6 +260,23 @@ def _run_config(args: argparse.Namespace) -> RunConfig:
             else CheckpointMode.MANDATORY
         ),
     )
+
+
+def _discard_trace(_trace: Trace) -> None:
+    """A no-op trace sink for commands that make no calls (calibrate)."""
+
+
+def _calibrate(settings: Settings, sessions: sessionmaker[Session], *, ceiling_usd: float) -> str:
+    """The worst-case cost projection. Providers are unused by the projection, so a no-op
+    sink and a fake search stand in — calibrate makes no calls and needs no API keys."""
+    services = build_stage_services(
+        settings,
+        sessions=sessions,
+        gateway=build_gateway(settings, _discard_trace),
+        search=FakeSearchProvider(),
+        sink=_discard_trace,
+    )
+    return render_projection(project_cost(services, ceiling_usd=ceiling_usd))
 
 
 def _services(
