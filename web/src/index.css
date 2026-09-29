@@ -1,0 +1,270 @@
+:root {
+  --fg: #1a1a1a;
+  --muted: #6b7280;
+  --border: #e2e5ea;
+  --bg: #f7f8fa;
+  --card: #ffffff;
+  --accent: #2563eb;
+  --good: #16a34a;
+  --warn: #d97706;
+  --bad: #dc2626;
+  --neutral: #6b7280;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  color: var(--fg);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+}
+
+.app {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 4rem;
+}
+
+h1 {
+  font-size: 1.5rem;
+}
+h2 {
+  font-size: 1.05rem;
+  margin: 0 0 0.75rem;
+}
+
+.stack > * + * {
+  margin-top: 1.25rem;
+}
+
+.row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.row-between {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+}
+
+.muted {
+  color: var(--muted);
+}
+.error {
+  color: var(--bad);
+  font-weight: 500;
+}
+
+a {
+  color: var(--accent);
+}
+
+.btn {
+  display: inline-block;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--fg);
+  padding: 0.45rem 0.9rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  text-decoration: none;
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.btn.danger {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+th,
+td {
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.chip {
+  display: inline-block;
+  font-size: 0.75rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: #eef1f5;
+  color: #374151;
+}
+.chip-good {
+  background: #dcfce7;
+  color: #166534;
+}
+.chip-warn {
+  background: #fef3c7;
+  color: #92400e;
+}
+.chip-bad {
+  background: #fee2e2;
+  color: #991b1b;
+}
+.chip-neutral {
+  background: #eef1f5;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-bottom: 0.9rem;
+  max-width: 32rem;
+}
+.field label,
+.field legend {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+input,
+select {
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-family: inherit;
+}
+.check {
+  display: inline-flex;
+  gap: 0.4rem;
+  align-items: center;
+  margin-right: 1rem;
+  color: var(--fg);
+  font-size: 0.9rem;
+}
+
+.meter {
+  position: relative;
+  height: 1.25rem;
+  background: #eef1f5;
+  border-radius: 6px;
+  overflow: hidden;
+  margin: 0.5rem 0;
+}
+.meter-fill {
+  height: 100%;
+  background: var(--accent);
+}
+.meter-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+}
+
+.funnel {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.funnel li {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 6px;
+  background: #eef1f5;
+  color: var(--muted);
+}
+.funnel li.done {
+  background: #dcfce7;
+  color: #166534;
+}
+.funnel li.current {
+  background: var(--accent);
+  color: #fff;
+}
+
+.counts {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+.counts strong {
+  font-size: 1.25rem;
+}
+
+.shortlist,
+.lead {
+  margin: 0;
+}
+.shortlist li,
+.lead {
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.claims {
+  margin: 0.4rem 0 0;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.15rem 0.75rem;
+  font-size: 0.9rem;
+}
+.claims dt {
+  color: var(--muted);
+}
+.claims dd {
+  margin: 0;
+}
+
+.claim {
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.claim.conflict {
+  background: #fff7ed;
+}
+.sources {
+  margin: 0.3rem 0 0;
+  padding-left: 1.1rem;
+  font-size: 0.85rem;
+}
+
+.report {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  background: #fbfbfd;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  overflow-x: auto;
+}

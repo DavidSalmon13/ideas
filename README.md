@@ -51,6 +51,20 @@ uv run opp discover --industry HVAC --cassette path/to/cassette.json
 uv run pytest                        # the whole suite runs offline
 ```
 
+### Web UI
+
+A React SPA in `web/` is a thin client over the engine's REST + SSE API (start a run,
+watch the funnel live, handle the checkpoint, read the brief, drill into evidence).
+
+```bash
+uv run uvicorn opp.api.app:app        # the API + worker (localhost:8000)
+
+cd web
+npm install
+VITE_API_BASE=http://127.0.0.1:8000 npm run dev   # the SPA at localhost:5173
+npm test                              # component/client tests, fully offline
+```
+
 ## How it works (high level)
 
 A **funnel**, not a linear pipeline — buy breadth cheaply, spend depth selectively, attack before scoring:
