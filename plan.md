@@ -636,7 +636,7 @@ This is the earliest point the product demonstrates its core value: a grounded, 
 - [x] React SPA: New Run, Run Progress, Checkpoint, Opportunity Detail, Evidence Explorer, Library
 
 **Phase 8 — Quality**
-- [ ] Unit/integration/contract/e2e tests on cassettes
+- [x] Unit/integration/contract/e2e tests on cassettes
 - [ ] `evals/` suite (hallucination gate, anti-generic, fatal-flaw, rubric)
 - [ ] Observability polish + **cost calibration ≤ $20**
 

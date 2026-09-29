@@ -146,6 +146,11 @@ def test_resume_after_an_interruption_continues_from_the_ledgers(
     assert outcome.cost_usd > spent_before > 0
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX SIGKILL: Windows has no equivalent that leaves a resumable partial. "
+    "Exercised on Linux (CI); the in-process interruption test covers resume on all platforms.",
+)
 def test_resume_after_the_process_is_killed(
     sessions: sessionmaker[Session], tmp_path: Path
 ) -> None:
