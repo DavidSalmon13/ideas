@@ -637,7 +637,7 @@ This is the earliest point the product demonstrates its core value: a grounded, 
 
 **Phase 8 — Quality**
 - [x] Unit/integration/contract/e2e tests on cassettes
-- [ ] `evals/` suite (hallucination gate, anti-generic, fatal-flaw, rubric)
+- [x] `evals/` suite (hallucination gate, anti-generic, fatal-flaw, rubric)
 - [ ] Observability polish + **cost calibration ≤ $20**
 
 **Phase 9 — Hardening + deploy + V1**

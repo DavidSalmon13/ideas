@@ -49,5 +49,5 @@ mypy_path = "src"
 packages = ["opp"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "evals"]
 addopts = "-ra"
