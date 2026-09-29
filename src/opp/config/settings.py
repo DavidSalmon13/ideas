@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     log_level: LogLevel = "INFO"
     log_json: bool = True
 
+    # Where the built React SPA (web/dist) lives, so the API can serve it in the single
+    # container (plan.md §29). Unset in dev/tests (the SPA runs on Vite); the Docker image
+    # sets it to the copied-in build. Missing dir → the API just doesn't serve a UI.
+    spa_dist_dir: str | None = None
+
     # Search (plan.md §17). Price is per call; check the provider's current pricing.
     search_provider: SearchProviderName = "tavily"
     tavily_api_key: SecretStr | None = None

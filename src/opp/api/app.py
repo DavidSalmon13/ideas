@@ -7,6 +7,7 @@ The SPA is a separate client of this API (plan.md §12); CORS is opened for loca
 import contextlib
 from collections.abc import AsyncIterator
 from datetime import timedelta
+from pathlib import Path
 
 import structlog
 from fastapi import FastAPI
@@ -17,6 +18,7 @@ from opp.api.errors import register_error_handlers
 from opp.api.meta import router as meta_router
 from opp.api.opportunities import router as opportunities_router
 from opp.api.runs import router as runs_router
+from opp.api.spa import mount_spa
 from opp.config.settings import get_settings
 from opp.observability.logging import configure_logging
 from opp.research.factory import SearchConfigError
@@ -70,6 +72,14 @@ def create_app() -> FastAPI:
     app.include_router(runs_router)
     app.include_router(opportunities_router)
     app.include_router(meta_router)
+
+    # Serve the built SPA in the single-container deploy, if a build is present.
+    if settings.spa_dist_dir:
+        dist = Path(settings.spa_dist_dir)
+        if (dist / "index.html").is_file():
+            mount_spa(app, dist)
+        else:
+            log.warning("spa_dist_missing", dir=settings.spa_dist_dir)
     return app
 
 

@@ -12,7 +12,7 @@ It optimizes for the chain **Evidence → Opportunity → Validation → Economi
 
 ## Status
 
-Design complete; implementation in progress (Phases 0–4 done, Phase 5 next; the checklist in [`plan.md`](./plan.md) §35 is the live status). The design is captured across three documents (read in order):
+Design complete; the full engine + web UI are built and the offline suite is green (Phases 0–8 done; Phase 9 hardening/deploy in progress — the checklist in [`plan.md`](./plan.md) §35 is the live status). The design is captured across three documents (read in order):
 
 1. **[`intent.md`](./intent.md)** — product & engineering *intent* (the WHAT and WHY): vision, principles, agent architecture, evaluation framework, constraints. The source of truth.
 2. **[`specs.md`](./specs.md)** — the implementation-ready *product specification* (the detailed HOW-it-behaves): UX, inputs, data models, agent contracts, run lifecycle, failure handling, MVP scope, and testable acceptance criteria.
@@ -61,9 +61,15 @@ uv run uvicorn opp.api.app:app        # the API + worker (localhost:8000)
 
 cd web
 npm install
-VITE_API_BASE=http://127.0.0.1:8000 npm run dev   # the SPA at localhost:5173
+VITE_API_BASE=http://127.0.0.1:8000 npm run dev   # the SPA at localhost:5173/app/
 npm test                              # component/client tests, fully offline
 ```
+
+### Deployment (single container)
+
+`docker compose up --build` runs the API + worker and serves the built SPA from one
+container (SQLite on the `./data` volume). Open the UI at <http://127.0.0.1:8000/app/>.
+See [`docs/deploy.md`](./docs/deploy.md) for configuration, backups and operations.
 
 ## How it works (high level)
 

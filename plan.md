@@ -642,6 +642,6 @@ This is the earliest point the product demonstrates its core value: a grounded, 
 
 **Phase 9 — Hardening + deploy + V1**
 - [x] Security review (SSRF/injection); restart/resume soak
-- [ ] Single-container deploy + docs
+- [x] Single-container deploy + docs
 - [ ] V1: promote/refresh/compare, preference learning + exploration allowance, second-profile UI, optional auth
 ```

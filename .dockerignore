@@ -6,3 +6,5 @@
 .pytest_cache
 .env
 *.db
+web/node_modules
+web/dist
