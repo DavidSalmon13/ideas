@@ -158,6 +158,20 @@ select {
   font-size: 0.9rem;
   font-family: inherit;
 }
+.api-token-bar {
+  margin-bottom: 1rem;
+}
+.api-token {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+}
+.api-token input {
+  width: 14rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.8rem;
+}
 .check {
   display: inline-flex;
   gap: 0.4rem;

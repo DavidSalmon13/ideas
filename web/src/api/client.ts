@@ -15,6 +15,27 @@ import type {
 
 export const API_BASE: string = import.meta.env.VITE_API_BASE ?? ''
 
+// Optional bearer-token auth (src/opp/api/auth.py): unset by default (local/dev has none
+// configured server-side either); when the operator sets one for a remote deployment, it's
+// kept in localStorage and sent as `Authorization: Bearer <token>` on every request. The
+// SSE stream can't set headers, so `authQueryParam` below carries it as `?token=` instead.
+const TOKEN_KEY = 'opp_api_token'
+
+export function getApiToken(): string {
+  return localStorage.getItem(TOKEN_KEY) ?? ''
+}
+
+export function setApiToken(token: string): void {
+  if (token) localStorage.setItem(TOKEN_KEY, token)
+  else localStorage.removeItem(TOKEN_KEY)
+}
+
+// `?token=<token>` for a URL the browser opens itself (EventSource), or '' when unset.
+export function authQueryParam(): string {
+  const token = getApiToken()
+  return token ? `token=${encodeURIComponent(token)}` : ''
+}
+
 export class ApiError extends Error {
   status: number
   constructor(status: number, detail: string) {
@@ -25,9 +46,13 @@ export class ApiError extends Error {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const token = getApiToken()
+  const headers: Record<string, string> = {}
+  if (body !== undefined) headers['Content-Type'] = 'application/json'
+  if (token) headers.Authorization = `Bearer ${token}`
   const res = await fetch(`${API_BASE}${path}`, {
     method,
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    headers: Object.keys(headers).length ? headers : undefined,
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   if (!res.ok) {

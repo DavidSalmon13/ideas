@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { api, ApiError } from './client'
+import { api, ApiError, authQueryParam, getApiToken, setApiToken } from './client'
 
-afterEach(() => vi.restoreAllMocks())
+afterEach(() => {
+  vi.restoreAllMocks()
+  setApiToken('')
+})
 
 describe('api client', () => {
   it('parses JSON on success', async () => {
@@ -35,5 +38,39 @@ describe('api client', () => {
       opportunity_id: null,
       reason: null,
     })
+  })
+
+  it('sends no Authorization header when no token is set', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, status: 200, json: async () => [] })
+    globalThis.fetch = fetchMock as never
+    await api.listRuns()
+    const [, init] = fetchMock.mock.calls[0]
+    expect(init.headers).toBeUndefined()
+  })
+
+  it('attaches a stored token as an Authorization header', async () => {
+    setApiToken('s3cret')
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, status: 200, json: async () => [] })
+    globalThis.fetch = fetchMock as never
+    await api.listRuns()
+    const [, init] = fetchMock.mock.calls[0]
+    expect(init.headers.Authorization).toBe('Bearer s3cret')
+  })
+
+  it('exposes the token as a query param for the SSE stream', () => {
+    expect(authQueryParam()).toBe('')
+    setApiToken('s3cret')
+    expect(authQueryParam()).toBe('token=s3cret')
+    expect(getApiToken()).toBe('s3cret')
+  })
+
+  it('clears the stored token when set to an empty string', () => {
+    setApiToken('s3cret')
+    setApiToken('')
+    expect(getApiToken()).toBe('')
   })
 })

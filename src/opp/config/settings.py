@@ -110,6 +110,11 @@ class Settings(BaseSettings):
     preference_note_limit: int = Field(default=20, ge=0)
     exploration_fraction: float = Field(default=0.2, ge=0, le=1)
 
+    # Optional bearer-token auth (plan.md §11, §18, §29): a single shared secret for V1
+    # remote use. Unset (default) means no auth at all — the MVP posture for a tool bound
+    # to localhost. When set, every request but /health must present it.
+    api_auth_token: SecretStr | None = None
+
 
 @lru_cache
 def get_settings() -> Settings:

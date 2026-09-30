@@ -13,6 +13,7 @@ import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from opp.api.auth import BearerAuthMiddleware
 from opp.api.compare import router as compare_router
 from opp.api.engine import Engine, build_engine
 from opp.api.errors import register_error_handlers
@@ -58,6 +59,13 @@ def create_app() -> FastAPI:
     configure_logging(settings.log_level, settings.log_json)
 
     app = FastAPI(title="Opportunity Discovery & Evaluation System", lifespan=_lifespan)
+    # Auth is added before CORS, which puts CORS outermost (Starlette runs the
+    # most-recently-added middleware first): CORS answers preflight OPTIONS requests
+    # itself, before Auth ever sees them, and adds its headers to Auth's own 401s.
+    app.add_middleware(
+        BearerAuthMiddleware,
+        token=settings.api_auth_token.get_secret_value() if settings.api_auth_token else None,
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
