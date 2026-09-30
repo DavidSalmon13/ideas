@@ -293,5 +293,13 @@ class CheckpointRequest(BaseModel):
     reason: str | None = None
 
 
+class PromoteRequest(BaseModel):
+    """Promote a shortlisted runner-up to its own deep-research run (specs.md §2.11).
+    Both fields default to the source run's config."""
+
+    budget_ceiling_usd: float | None = Field(default=None, gt=0)
+    checkpoint_mode: CheckpointMode | None = None
+
+
 class PatchOpportunityRequest(BaseModel):
     status: OpportunityStatus

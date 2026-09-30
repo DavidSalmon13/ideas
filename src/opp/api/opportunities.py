@@ -10,10 +10,13 @@ from opp.api.dtos import (
     EvidenceResponse,
     OpportunitySummary,
     PatchOpportunityRequest,
+    PromoteRequest,
     ReportResponse,
+    RunDetail,
 )
 from opp.api.engine import EngineDep
 from opp.api.errors import Problem
+from opp.api.views import load_run, run_detail
 from opp.db.repositories import (
     ClaimRepository,
     EvaluationRepository,
@@ -24,6 +27,8 @@ from opp.db.repositories import (
 from opp.domain.base import utcnow
 from opp.domain.enums import OpportunityStatus, Verdict
 from opp.domain.opportunity import Opportunity
+from opp.orchestration.budget import BudgetPreflightError
+from opp.orchestration.orchestrator import PromoteError
 from opp.reporting.final import render_report
 from opp.reporting.partial import render_brief
 
@@ -73,6 +78,33 @@ def get_opportunity_report(opportunity_id: UUID, engine: EngineDep) -> ReportRes
         report = max(reports, key=lambda r: r.created_at)
     markdown = render_brief(report) if report.incomplete else render_report(report)
     return ReportResponse.of(report, markdown)
+
+
+@router.post("/{opportunity_id}/promote", status_code=status.HTTP_201_CREATED)
+async def promote_opportunity(
+    opportunity_id: UUID,
+    body: PromoteRequest,
+    engine: EngineDep,
+) -> RunDetail:
+    """Promote a shortlisted runner-up into a new deep-research run that skips discovery,
+    triage and shallow validation (specs.md §2.11), then start advancing it."""
+    with engine.sessions() as session:
+        _require(session, opportunity_id)
+    try:
+        run = engine.orchestrator.promote(
+            opportunity_id,
+            budget_ceiling_usd=body.budget_ceiling_usd,
+            checkpoint_mode=body.checkpoint_mode,
+        )
+    except PromoteError as exc:
+        raise Problem(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    except BudgetPreflightError as exc:
+        raise Problem(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    engine.run_manager.launch(run.id, engine.orchestrator.advance(run.id))
+    with engine.sessions() as session:
+        detail = load_run(session, run.id)
+        assert detail is not None
+        return run_detail(session, detail, running=True)
 
 
 @router.patch("/{opportunity_id}")

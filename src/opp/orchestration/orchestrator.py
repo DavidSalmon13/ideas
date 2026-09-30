@@ -39,17 +39,27 @@ from opp.db.repositories import (
     StageRepository,
     TraceRepository,
 )
-from opp.domain.base import utcnow
+from opp.domain.base import new_id, utcnow
 from opp.domain.enums import (
     CheckpointAction,
     CheckpointMode,
+    OpportunityStatus,
     RunStatus,
     StageName,
     StageStatus,
 )
-from opp.domain.opportunity import Opportunity
+from opp.domain.opportunity import (
+    Distribution,
+    Economics,
+    Opportunity,
+    ProductMvp,
+    RedTeamAnalysis,
+    Research,
+    SmallTeamFeasibility,
+)
 from opp.domain.run import CheckpointDecision, ResearchRun, RunConfig, RunTransition, Stage
-from opp.orchestration.budget import minimum_to_finish, precheck, preflight
+from opp.evidence.store import EvidenceStore
+from opp.orchestration.budget import minimum_to_finish, precheck, preflight, preflight_from
 from opp.orchestration.stages import (
     DeepResearchStage,
     DiscoveryStage,
@@ -103,6 +113,10 @@ class ResumeError(Exception):
 
 class CheckpointError(Exception):
     """The checkpoint decision can't be applied (wrong state, unknown pick, no reason)."""
+
+
+class PromoteError(Exception):
+    """The opportunity can't be promoted (unknown, or never shallow-scored)."""
 
 
 @dataclass(frozen=True)
@@ -298,6 +312,86 @@ class Orchestrator:
             checkpoint=decision,
         )
         return await self.advance(run_id)
+
+    def promote(
+        self,
+        opportunity_id: UUID,
+        *,
+        budget_ceiling_usd: float | None = None,
+        checkpoint_mode: CheckpointMode | None = None,
+    ) -> ResearchRun:
+        """Start a new deep-research run scoped to a shortlisted runner-up, skipping
+        discovery, triage and shallow validation (specs.md §2.11, §4.3). The runner-up is
+        copied into the new run (fresh claim ids, so the source run is untouched) and the
+        source opportunity is marked ``promoted``. The new run's config is inherited from
+        the source run's, with an optional fresh budget or checkpoint mode.
+
+        Raises ``PromoteError`` for an unknown or never-scored opportunity, and
+        ``BudgetPreflightError`` when the ceiling can't cover deep research onward. The
+        returned run is stored but not yet advanced — the caller launches it."""
+        with self._sessions() as session:
+            source = OpportunityRepository(session).get(opportunity_id)
+            if source is None:
+                raise PromoteError(f"no opportunity {opportunity_id}")
+            if source.shallow is None:
+                raise PromoteError(
+                    f"opportunity {opportunity_id} was never shallow-scored, so it is not a "
+                    "promotable shortlist item"
+                )
+            base = RunRepository(session).get(source.run_id)
+        run_config = base.run_config if base is not None else RunConfig()
+        ceiling = (
+            budget_ceiling_usd
+            if budget_ceiling_usd is not None
+            else run_config.budget_ceiling_usd
+        )
+        mode = checkpoint_mode if checkpoint_mode is not None else run_config.checkpoint_mode
+        run_config = run_config.model_copy(
+            update={"budget_ceiling_usd": ceiling, "checkpoint_mode": mode}
+        )
+        preflight_from(StageName.DEEP_RESEARCH, ceiling, self._services.stage_minimums_usd)
+
+        run = ResearchRun(
+            run_config=run_config,
+            status=RunStatus.DEEP_RESEARCH,
+            current_stage=StageName.DEEP_RESEARCH,
+        )
+        clone = _promoted_opportunity(source, run_id=run.id)
+        run.checkpoint = CheckpointDecision(
+            action=CheckpointAction.PROMOTE, opportunity_id=clone.id
+        )
+        run.transitions.append(
+            RunTransition(
+                from_status=RunStatus.CREATED,
+                to_status=RunStatus.DEEP_RESEARCH,
+                reason=f"promoted from shortlist: {source.title!r} (opportunity {source.id})",
+            )
+        )
+        now = utcnow()
+        with self._sessions() as session:
+            RunRepository(session).add(run)
+            stages = StageRepository(session)
+            for name in (
+                StageName.DISCOVERY,
+                StageName.SCREENING,
+                StageName.SHALLOW_VALIDATION,
+            ):
+                stages.add(
+                    Stage(
+                        run_id=run.id,
+                        name=name,
+                        status=StageStatus.SKIPPED,
+                        started_at=now,
+                        ended_at=now,
+                    )
+                )
+            EvidenceStore(session).save_opportunity(clone)
+            source.status = OpportunityStatus.PROMOTED
+            source.updated_at = now
+            OpportunityRepository(session).upsert(source)
+            session.commit()
+        log.info("run_promoted", run_id=str(run.id), from_opportunity=str(source.id))
+        return run
 
     async def recover(self, *, stale_after: timedelta) -> list[RunOutcome]:
         """The startup recovery scan (plan.md §10): continue every run a dead process left
@@ -516,6 +610,53 @@ class Orchestrator:
             run.cost_to_date_usd = max(run.cost_to_date_usd, run_budget.spent_usd)
             runs.upsert(run)
             session.commit()
+
+
+# Fields a deep-research run produces; a promoted copy starts them empty and re-earns them.
+_DEEP_RESEARCH_RESET: dict[str, object] = {
+    "competition": [],
+    "existing_solutions": [],
+    "product_mvp": ProductMvp(),
+    "economics": Economics(),
+    "distribution": Distribution(),
+    "small_team_feasibility": SmallTeamFeasibility(),
+    "risks": [],
+    "assumption_ids": [],
+    "red_team": RedTeamAnalysis(),
+    "validation_backlog": [],
+    "evaluation": None,
+    "research": Research(),
+    "synthesis": None,
+}
+
+
+def _promoted_opportunity(source: Opportunity, *, run_id: UUID) -> Opportunity:
+    """A fresh copy of a shortlisted opportunity for a new deep-research run. Its shallow
+    findings (the lead-derived and screening claims, and the provisional score) carry over
+    under new claim ids, so the source run's evidence is untouched; the deep-research fields
+    start empty so the new run re-earns them (specs.md §2.11)."""
+    now = utcnow()
+    clone = source.model_copy(
+        deep=True,
+        update={
+            "id": new_id(),
+            "run_id": run_id,
+            "status": OpportunityStatus.NEW,
+            "created_at": now,
+            "updated_at": now,
+            **_DEEP_RESEARCH_RESET,
+        },
+    )
+    id_map: dict[UUID, UUID] = {}
+    for claim in clone.claims():  # the copy's own claim objects: safe to re-key in place
+        old, claim.id = claim.id, new_id()
+        id_map[old] = claim.id
+    if clone.shallow is not None:
+        for score in clone.shallow.dimension_scores:
+            score.supporting_claim_ids = [
+                id_map.get(cid, cid) for cid in score.supporting_claim_ids
+            ]
+    return clone
 
 
 def _get(session: Session, run_id: UUID) -> ResearchRun:

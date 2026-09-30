@@ -203,6 +203,7 @@ class CheckpointAction(StrEnum):
     PICK = "pick"  # re-pick a runner-up instead (needs a one-line reason)
     VETO = "veto"  # reject the whole shortlist (needs a one-line reason)
     AUTO = "auto"  # autonomous mode selected the top-ranked candidate
+    PROMOTE = "promote"  # a later run promoted a shortlisted runner-up to deep research
 
 
 class RunStatus(StrEnum):

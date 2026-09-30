@@ -28,12 +28,30 @@ def minimum_run_cost(minimums: StageMinimums) -> float:
     return sum(minimums.get(stage, 0.0) for _, stage in FUNNEL)
 
 
+def minimum_run_cost_from(start: StageName, minimums: StageMinimums) -> float:
+    """The least a run that begins at ``start`` could cost: the minimums of ``start`` and
+    every stage after it. Used by a promoted run, which skips discovery/triage/shallow."""
+    stages = [stage for _, stage in FUNNEL]
+    tail = stages[stages.index(start) :] if start in stages else stages
+    return sum(minimums.get(stage, 0.0) for stage in tail)
+
+
 def preflight(ceiling_usd: float, minimums: StageMinimums) -> None:
     needed = minimum_run_cost(minimums)
     if ceiling_usd < needed:
         raise BudgetPreflightError(
             f"a ${ceiling_usd:.2f} ceiling is below the ${needed:.2f} a full run needs at least "
             "(the sum of the per-stage minimums); raise the budget or lower the minimums"
+        )
+
+
+def preflight_from(start: StageName, ceiling_usd: float, minimums: StageMinimums) -> None:
+    """Pre-flight for a run that begins mid-funnel (a promotion, specs.md §2.11)."""
+    needed = minimum_run_cost_from(start, minimums)
+    if ceiling_usd < needed:
+        raise BudgetPreflightError(
+            f"a ${ceiling_usd:.2f} ceiling is below the ${needed:.2f} a run from the "
+            f"{start.value} stage on needs at least; raise the budget or lower the minimums"
         )
 
 
@@ -70,7 +88,7 @@ def minimum_to_finish(stages: Iterable[Stage], minimums: StageMinimums) -> float
     total = 0.0
     for _, name in FUNNEL:
         attempt = latest.get(name)
-        if attempt is not None and attempt.status is StageStatus.COMPLETED:
+        if attempt is not None and attempt.status in (StageStatus.COMPLETED, StageStatus.SKIPPED):
             continue
         total += stage_need(name, minimums, attempt.cost_usd if attempt else 0.0)
     return total
