@@ -25,6 +25,7 @@ function runDetail(overrides: Record<string, unknown> = {}) {
     profile_ref: 'bootstrap',
     mode: 'open_ended',
     checkpoint_mode: 'mandatory',
+    hard_gates_override: { max_capital_usd: null, max_time_to_revenue_days: null },
     current_stage: 'discovery',
     cost_to_date_usd: 1,
     budget_ceiling_usd: 20,
@@ -74,6 +75,27 @@ describe('Library', () => {
     expect(await screen.findByText('HVAC dispatch board')).toBeInTheDocument()
     expect(screen.getByText('pursue')).toBeInTheDocument()
   })
+
+  it('flags a run whose gates were overridden for itself', async () => {
+    mockFetch((_m, path) => {
+      if (path === '/runs')
+        return [
+          runDetail({
+            status: 'completed',
+            profile_ref: 'micro',
+            hard_gates_override: { max_capital_usd: 5000, max_time_to_revenue_days: null },
+          }),
+        ]
+      return []
+    })
+    render(
+      <MemoryRouter>
+        <Library />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByText('micro')).toBeInTheDocument()
+    expect(screen.getByText('overridden')).toBeInTheDocument()
+  })
 })
 
 describe('NewRun', () => {
@@ -118,6 +140,65 @@ describe('NewRun', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Start run' }))
     expect(await screen.findByText('run page r2')).toBeInTheDocument()
     expect(posted?.checkpoint_mode).toBe('mandatory')
+    expect(posted?.hard_gates_override).toEqual({
+      max_capital_usd: null,
+      max_time_to_revenue_days: null,
+    })
+  })
+
+  it('sends a capital/time-to-revenue override when the operator sets one', async () => {
+    let posted: Record<string, unknown> | undefined
+    mockFetch((method, path, body) => {
+      if (path === '/config')
+        return {
+          profiles: [
+            {
+              id: 'bootstrap',
+              name: 'Bootstrap',
+              max_capital_usd: 2000,
+              max_time_to_revenue_days: 120,
+              weights: {},
+            },
+            {
+              id: 'micro',
+              name: 'Micro',
+              max_capital_usd: 1000,
+              max_time_to_revenue_days: 30,
+              weights: {},
+            },
+          ],
+          default_profile: 'bootstrap',
+          default_budget_usd: 20,
+          stage_minimums_usd: {},
+          signal_sources: ['unmet_need'],
+          business_shapes: ['saas'],
+          checkpoint_modes: ['mandatory', 'autonomous'],
+          run_modes: ['open_ended', 'constrained'],
+          dimensions: [],
+        }
+      if (method === 'POST' && path === '/runs') {
+        posted = body as Record<string, unknown>
+        return runDetail({ id: 'r3' })
+      }
+      return {}
+    })
+    render(
+      <MemoryRouter initialEntries={['/runs/new']}>
+        <Routes>
+          <Route path="/runs/new" element={<NewRun />} />
+          <Route path="/runs/:id" element={<Probe />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    await userEvent.selectOptions(await screen.findByLabelText(/^Profile$/), 'micro')
+    await userEvent.type(screen.getByLabelText(/Capital ceiling override/), '5000')
+    await userEvent.click(screen.getByRole('button', { name: 'Start run' }))
+    expect(await screen.findByText('run page r3')).toBeInTheDocument()
+    expect(posted?.profile_ref).toBe('micro')
+    expect(posted?.hard_gates_override).toEqual({
+      max_capital_usd: 5000,
+      max_time_to_revenue_days: null,
+    })
   })
 })
 
@@ -192,6 +273,28 @@ describe('RunProgress', () => {
     )
     expect(await screen.findByText('5')).toBeInTheDocument()
     expect(screen.getByText('Inspect leads & kills')).toBeInTheDocument()
+  })
+
+  it('flags a run whose gates were overridden for itself', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource)
+    mockFetch((_m, path) =>
+      path === '/runs/r1'
+        ? runDetail({
+            profile_ref: 'micro',
+            hard_gates_override: { max_capital_usd: 5000, max_time_to_revenue_days: null },
+          })
+        : {},
+    )
+    render(
+      <MemoryRouter initialEntries={['/runs/r1']}>
+        <Routes>
+          <Route path="/runs/:id" element={<RunProgress />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    expect(await screen.findByText('micro')).toBeInTheDocument()
+    expect(screen.getByText('gates overridden for this run')).toBeInTheDocument()
+    expect(screen.getByText(/capital ≤ \$5000/)).toBeInTheDocument()
   })
 })
 

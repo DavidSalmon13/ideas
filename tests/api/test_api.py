@@ -19,7 +19,7 @@ from opp.api.engine import Engine, RunManager
 from opp.db.base import Base
 from opp.db.session import create_db_engine, create_session_factory
 from opp.domain.enums import CheckpointMode, RunStatus, SignalSource
-from opp.domain.run import DiscoveryScope, LeadTargets, RunConfig
+from opp.domain.run import DiscoveryScope, HardGateOverrides, LeadTargets, RunConfig
 from opp.llm.gateway import LLMGateway
 from opp.observability.traces import DbTraceSink
 from opp.orchestration.orchestrator import Orchestrator
@@ -111,6 +111,44 @@ def test_profiles_work_without_a_configured_engine() -> None:
     problem = client.get("/runs")
     assert problem.status_code == 503
     assert problem.headers["content-type"].startswith("application/problem+json")
+
+
+def test_run_carries_its_selected_profile_and_any_gate_overrides(harness: Harness) -> None:
+    """A run's chosen profile and per-run gate overrides (specs.md §2.3) round-trip through
+    the API, so a relaxed-gate run is never confused with a default one (specs.md §3.3)."""
+    config = RunConfig(
+        profile_ref="micro",
+        hard_gates_override=HardGateOverrides(max_capital_usd=5_000, max_time_to_revenue_days=45),
+        discovery_scope=_config(CheckpointMode.MANDATORY).discovery_scope,
+        lead_targets=LeadTargets(discovery_n=6),
+    )
+    with TestClient(harness.app) as client:
+        created = client.post("/runs", json=config.model_dump(mode="json"))
+        assert created.status_code == 201
+        body = created.json()
+        assert body["profile_ref"] == "micro"
+        assert body["hard_gates_override"] == {
+            "max_capital_usd": 5_000,
+            "max_time_to_revenue_days": 45,
+        }
+
+        client.get(f"/runs/{body['id']}/events")  # drain the background task to a settled state
+        fetched = client.get(f"/runs/{body['id']}").json()
+        assert fetched["profile_ref"] == "micro"
+        assert fetched["hard_gates_override"]["max_capital_usd"] == 5_000
+
+
+def test_a_default_run_carries_no_gate_overrides(harness: Harness) -> None:
+    with TestClient(harness.app) as client:
+        created = client.post(
+            "/runs", json=_config(CheckpointMode.MANDATORY).model_dump(mode="json")
+        )
+        body = created.json()
+        assert body["hard_gates_override"] == {
+            "max_capital_usd": None,
+            "max_time_to_revenue_days": None,
+        }
+        client.get(f"/runs/{body['id']}/events")
 
 
 # --- run lifecycle through the API --------------------------------------------------------

@@ -41,7 +41,16 @@ export function Library() {
               {runs.data.map((run) => (
                 <tr key={run.id}>
                   <td>{new Date(run.created_at).toLocaleString()}</td>
-                  <td>{run.profile_ref}</td>
+                  <td>
+                    {run.profile_ref}
+                    {(run.hard_gates_override.max_capital_usd != null ||
+                      run.hard_gates_override.max_time_to_revenue_days != null) && (
+                      <>
+                        {' '}
+                        <Chip text="overridden" tone="warn" />
+                      </>
+                    )}
+                  </td>
                   <td>
                     <Chip text={run.status} />
                   </td>

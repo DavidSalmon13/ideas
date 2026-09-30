@@ -64,6 +64,28 @@ export function RunProgress() {
             <Chip text={status ?? 'unknown'} />{' '}
             {event?.running ? <span className="muted">running…</span> : null}
           </p>
+          {detail && (
+            <p>
+              Profile: <strong>{detail.profile_ref}</strong>
+              {(detail.hard_gates_override.max_capital_usd != null ||
+                detail.hard_gates_override.max_time_to_revenue_days != null) && (
+                <>
+                  {' '}
+                  <Chip text="gates overridden for this run" tone="warn" />
+                  <span className="muted">
+                    {' '}
+                    {detail.hard_gates_override.max_capital_usd != null &&
+                      `capital ≤ $${detail.hard_gates_override.max_capital_usd.toFixed(0)}`}
+                    {detail.hard_gates_override.max_capital_usd != null &&
+                      detail.hard_gates_override.max_time_to_revenue_days != null &&
+                      ', '}
+                    {detail.hard_gates_override.max_time_to_revenue_days != null &&
+                      `time-to-revenue ≤ ${detail.hard_gates_override.max_time_to_revenue_days} days`}
+                  </span>
+                </>
+              )}
+            </p>
+          )}
           {event && (
             <CostMeter spent={event.cost_to_date_usd} ceiling={event.budget_ceiling_usd} />
           )}

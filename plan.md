@@ -647,6 +647,6 @@ This is the earliest point the product demonstrates its core value: a grounded, 
 - [x] V1: refresh (re-verify stale claims)
 - [x] V1: compare (side-by-side API + UI)
 - [x] V1: preference learning + exploration allowance
-- [ ] V1: second-profile UI
+- [x] V1: second-profile UI
 - [ ] V1: optional auth
 ```

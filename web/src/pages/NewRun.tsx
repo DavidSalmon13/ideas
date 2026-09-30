@@ -13,6 +13,9 @@ export function NewRun() {
 
   const [profile, setProfile] = useState('bootstrap')
   const [budget, setBudget] = useState(20)
+  // Per-run gate overrides (specs.md §2.3): blank = use the selected profile's own value.
+  const [capitalOverride, setCapitalOverride] = useState('')
+  const [timeOverride, setTimeOverride] = useState('')
   const [industry, setIndustry] = useState('')
   const [geography, setGeography] = useState('')
   const [targetCustomer, setTargetCustomer] = useState('')
@@ -44,6 +47,10 @@ export function NewRun() {
       mode: industry || geography || targetCustomer ? 'constrained' : 'open_ended',
       checkpoint_mode: autonomous ? 'autonomous' : 'mandatory',
       budget_ceiling_usd: budget,
+      hard_gates_override: {
+        max_capital_usd: capitalOverride ? Number(capitalOverride) : null,
+        max_time_to_revenue_days: timeOverride ? Number(timeOverride) : null,
+      },
       discovery_scope: {
         industry: industry || null,
         geography: geography || null,
@@ -65,6 +72,8 @@ export function NewRun() {
   if (config.loading) return <Loading what="options" />
   if (config.error) return <ErrorBox message={config.error} />
   if (!config.data) return null
+
+  const activeProfile = config.data.profiles.find((p) => p.id === profile)
 
   return (
     <div className="stack">
@@ -90,6 +99,35 @@ export function NewRun() {
             min={1}
             value={budget}
             onChange={(e) => setBudget(Number(e.target.value))}
+          />
+        </div>
+
+        <div className="field">
+          <label htmlFor="capital-override">
+            Capital ceiling override (USD) — blank uses the profile&apos;s own
+            {activeProfile ? ` ($${activeProfile.max_capital_usd.toFixed(0)})` : ''}
+          </label>
+          <input
+            id="capital-override"
+            type="number"
+            min={1}
+            placeholder={activeProfile ? String(activeProfile.max_capital_usd) : ''}
+            value={capitalOverride}
+            onChange={(e) => setCapitalOverride(e.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="time-override">
+            Time-to-revenue override (days) — blank uses the profile&apos;s own
+            {activeProfile ? ` (${activeProfile.max_time_to_revenue_days})` : ''}
+          </label>
+          <input
+            id="time-override"
+            type="number"
+            min={1}
+            placeholder={activeProfile ? String(activeProfile.max_time_to_revenue_days) : ''}
+            value={timeOverride}
+            onChange={(e) => setTimeOverride(e.target.value)}
           />
         </div>
 

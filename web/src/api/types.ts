@@ -21,12 +21,20 @@ export type RunStatus =
 export type Verdict = 'pursue' | 'promising_but_unproven' | 'park' | 'kill'
 export type CheckpointAction = 'approve' | 'pick' | 'veto' | 'auto'
 
+// A run may loosen/tighten its profile's capital/time-to-revenue gates for itself only
+// (specs.md §2.3); null means "use the profile's own value".
+export interface HardGateOverridesDTO {
+  max_capital_usd: number | null
+  max_time_to_revenue_days: number | null
+}
+
 export interface RunSummary {
   id: string
   status: RunStatus
   profile_ref: string
   mode: string
   checkpoint_mode: string
+  hard_gates_override: HardGateOverridesDTO
   current_stage: string | null
   cost_to_date_usd: number
   budget_ceiling_usd: number
@@ -214,6 +222,7 @@ export interface CreateRunRequest {
   mode: string
   checkpoint_mode: string
   budget_ceiling_usd: number
+  hard_gates_override: HardGateOverridesDTO
   discovery_scope: {
     industry?: string | null
     geography?: string | null

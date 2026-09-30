@@ -26,7 +26,7 @@ from opp.domain.evidence import Claim, Source
 from opp.domain.lead import Kill, Lead
 from opp.domain.opportunity import Opportunity
 from opp.domain.report import Report
-from opp.domain.run import CheckpointDecision, ResearchRun, RunTransition
+from opp.domain.run import CheckpointDecision, HardGateOverrides, ResearchRun, RunTransition
 
 
 class RunSummary(BaseModel):
@@ -37,6 +37,9 @@ class RunSummary(BaseModel):
     profile_ref: str
     mode: RunMode
     checkpoint_mode: CheckpointMode
+    # A run may loosen/tighten its profile's gates for itself only (specs.md §2.3); carried
+    # here so a relaxed-gate run is never confused with a default one (specs.md §3.3).
+    hard_gates_override: HardGateOverrides
     current_stage: StageName | None
     cost_to_date_usd: float
     budget_ceiling_usd: float
@@ -53,6 +56,7 @@ class RunSummary(BaseModel):
             profile_ref=run.run_config.profile_ref,
             mode=run.run_config.mode,
             checkpoint_mode=run.run_config.checkpoint_mode,
+            hard_gates_override=run.run_config.hard_gates_override,
             current_stage=run.current_stage,
             cost_to_date_usd=run.cost_to_date_usd,
             budget_ceiling_usd=run.budget_ceiling_usd,
