@@ -301,5 +301,26 @@ class PromoteRequest(BaseModel):
     checkpoint_mode: CheckpointMode | None = None
 
 
+class RefreshRequest(BaseModel):
+    """Re-verify an opportunity's stale claims (specs.md §2.11). Both fields default to the
+    configured refresh budget and staleness window."""
+
+    budget_ceiling_usd: float | None = Field(default=None, gt=0)
+    max_age_days: float | None = Field(default=None, gt=0)
+
+
+class RefreshResponse(BaseModel):
+    """The outcome of a refresh: how many claims were stale and re-verified, and the small
+    run that did it (``run_id`` is null when nothing was stale)."""
+
+    opportunity_id: UUID
+    run_id: UUID | None
+    stale_claims: int
+    refreshed: int
+    status: RunStatus | None
+    cost_usd: float
+    detail: str
+
+
 class PatchOpportunityRequest(BaseModel):
     status: OpportunityStatus

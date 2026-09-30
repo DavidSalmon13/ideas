@@ -219,6 +219,9 @@ class RunStatus(StrEnum):
     BUILDING_PLAN = "building_plan"
     RED_TEAM = "red_team"
     EVALUATING = "evaluating"
+    # A standalone run that re-verifies an existing opportunity's stale claims (specs.md
+    # §2.11); it lives outside the funnel, so it is not part of the funnel state machine.
+    REFRESHING = "refreshing"
     COMPLETED = "completed"
     COMPLETED_PARTIAL = "completed_partial"
     CANCELLED = "cancelled"
@@ -242,6 +245,8 @@ class StageName(StrEnum):
     STRATEGY = "strategy"
     RED_TEAM = "red_team"
     EVALUATION = "evaluation"
+    # Re-verify an existing opportunity's stale claims (specs.md §2.11); not a funnel stage.
+    REFRESH = "refresh"
 
 
 class StageStatus(StrEnum):

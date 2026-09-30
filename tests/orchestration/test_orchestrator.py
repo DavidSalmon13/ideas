@@ -25,7 +25,9 @@ from opp.orchestration.stages import (
 )
 
 AUTONOMOUS = RunConfig(checkpoint_mode=CheckpointMode.AUTONOMOUS)
-WORK_STAGES = [s for s in StageName if s is not StageName.CHECKPOINT]
+# The funnel's work stages: every stage but the checkpoint (a wait) and refresh (a
+# standalone non-funnel op, specs.md §2.11).
+WORK_STAGES = [s for s in StageName if s not in (StageName.CHECKPOINT, StageName.REFRESH)]
 
 
 class Killed(BaseException):

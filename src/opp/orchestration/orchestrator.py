@@ -24,25 +24,31 @@ stops short of ``COMPLETED`` gets an incomplete report (specs.md §18.4).
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from uuid import UUID
 
 import structlog
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from opp.agents.base import AgentResult
 from opp.agents.budget import RunBudget
+from opp.agents.refresh import RefreshAgent
 from opp.db.repositories import (
+    AgentRunRepository,
     OpportunityRepository,
     ReportRepository,
     RunRepository,
+    SourceRepository,
     StageRepository,
     TraceRepository,
 )
 from opp.domain.base import new_id, utcnow
 from opp.domain.enums import (
+    AgentRunStatus,
     CheckpointAction,
     CheckpointMode,
+    ModelTier,
     OpportunityStatus,
     RunStatus,
     StageName,
@@ -57,7 +63,15 @@ from opp.domain.opportunity import (
     Research,
     SmallTeamFeasibility,
 )
-from opp.domain.run import CheckpointDecision, ResearchRun, RunConfig, RunTransition, Stage
+from opp.domain.run import (
+    AgentRun,
+    CheckpointDecision,
+    ResearchRun,
+    RunConfig,
+    RunTransition,
+    Stage,
+)
+from opp.evidence.freshness import stale_claims
 from opp.evidence.store import EvidenceStore
 from opp.orchestration.budget import minimum_to_finish, precheck, preflight, preflight_from
 from opp.orchestration.stages import (
@@ -119,11 +133,29 @@ class PromoteError(Exception):
     """The opportunity can't be promoted (unknown, or never shallow-scored)."""
 
 
+class RefreshError(Exception):
+    """The opportunity can't be refreshed (unknown)."""
+
+
 @dataclass(frozen=True)
 class RunOutcome:
     run_id: UUID
     status: RunStatus
     cost_usd: float
+
+
+@dataclass(frozen=True)
+class RefreshOutcome:
+    """The result of re-verifying an opportunity's stale claims (specs.md §2.11). ``run_id``
+    is ``None`` when nothing was stale, so no refresh run was created."""
+
+    opportunity_id: UUID
+    run_id: UUID | None
+    stale_claims: int
+    refreshed: int
+    status: RunStatus | None
+    cost_usd: float
+    detail: str
 
 
 def default_handlers(services: StageServices) -> dict[StageName, StageHandler]:
@@ -392,6 +424,118 @@ class Orchestrator:
             session.commit()
         log.info("run_promoted", run_id=str(run.id), from_opportunity=str(source.id))
         return run
+
+    async def refresh(
+        self,
+        opportunity_id: UUID,
+        *,
+        budget_ceiling_usd: float | None = None,
+        max_age_days: float | None = None,
+    ) -> RefreshOutcome:
+        """Re-verify an existing opportunity's stale claims against fresh evidence (specs.md
+        §2.11, §7.8). Claims older than the staleness window are re-searched and updated **in
+        place** (kept ids, so references stay valid); the RefreshAgent runs under its own
+        small budget in a dedicated ``refreshing`` run so its spend is isolated from the run
+        that produced the opportunity. Returns early (no run) when nothing is stale. Raises
+        ``RefreshError`` for an unknown opportunity."""
+        now = utcnow()
+        with self._sessions() as session:
+            opportunity = OpportunityRepository(session).get(opportunity_id)
+            if opportunity is None:
+                raise RefreshError(f"no opportunity {opportunity_id}")
+            sources = SourceRepository(session).get_many(
+                {sid for claim in opportunity.claims() for sid in claim.source_ids}
+            )
+        days = max_age_days if max_age_days is not None else self._services.claim_staleness_days
+        stale = stale_claims(opportunity, now=now, max_age=timedelta(days=days))
+        if not stale:
+            return RefreshOutcome(
+                opportunity_id, None, 0, 0, None, 0.0, "no stale claims to re-verify"
+            )
+
+        ceiling = (
+            budget_ceiling_usd
+            if budget_ceiling_usd is not None
+            else self._services.refresh_ceiling_usd
+        )
+        run = ResearchRun(
+            run_config=RunConfig(budget_ceiling_usd=ceiling),
+            status=RunStatus.REFRESHING,
+            current_stage=StageName.REFRESH,
+        )
+        run.transitions.append(
+            RunTransition(
+                from_status=RunStatus.CREATED,
+                to_status=RunStatus.REFRESHING,
+                reason=f"refresh of {opportunity.title!r} ({len(stale)} stale claim(s))",
+            )
+        )
+        stage = Stage(
+            run_id=run.id, name=StageName.REFRESH, status=StageStatus.RUNNING, started_at=now
+        )
+        agent_run = AgentRun(
+            stage_id=stage.id, agent_name=RefreshAgent.name, model_tier=ModelTier.MEDIUM
+        )
+        with self._sessions() as session:
+            RunRepository(session).add(run)
+            StageRepository(session).add(stage)
+            AgentRunRepository(session).add(agent_run)
+            session.commit()
+        log.info("refresh_started", run_id=str(run.id), opportunity=str(opportunity_id))
+
+        agent = RefreshAgent(opportunity, sources, [c.id for c in stale], now=now)
+        result = await self._services.runtime().run(
+            agent,
+            agent_run.id,
+            budget=self._services.refresh_budget,
+            run_budget=RunBudget(ceiling, spent_usd=0.0),
+        )
+        final = self._finalize_refresh(run.id, stage, result, now)
+        return RefreshOutcome(
+            opportunity_id,
+            run.id,
+            len(stale),
+            result.tasks_done,
+            final,
+            result.cost_usd,
+            f"re-verified {result.tasks_done} of {len(stale)} stale claim(s)",
+        )
+
+    def _finalize_refresh(
+        self, run_id: UUID, stage: Stage, result: AgentResult, now: datetime
+    ) -> RunStatus:
+        """Close the refresh run from how its agent ended: completed/degraded → completed,
+        budget stop → halted-budget, error → halted-error."""
+        if result.status in (AgentRunStatus.COMPLETED, AgentRunStatus.DEGRADED):
+            run_status, stage_status = RunStatus.COMPLETED, StageStatus.COMPLETED
+        elif result.budget_exhausted:
+            run_status, stage_status = RunStatus.HALTED_BUDGET, StageStatus.RUNNING
+        elif result.status is AgentRunStatus.CANCELLED:
+            run_status, stage_status = RunStatus.CANCELLED, StageStatus.RUNNING
+        else:
+            run_status, stage_status = RunStatus.HALTED_ERROR, StageStatus.FAILED
+        with self._sessions() as session:
+            runs = RunRepository(session)
+            run = _get(session, run_id)
+            run.status = run_status
+            run.cost_to_date_usd = _spent(session, run)
+            run.updated_at = now
+            run.transitions.append(
+                RunTransition(
+                    from_status=RunStatus.REFRESHING,
+                    to_status=run_status,
+                    reason=f"refresh {run_status.value}",
+                )
+            )
+            runs.upsert(run)
+            stage.status = stage_status
+            stage.cost_usd = run.cost_to_date_usd
+            if stage_status in (StageStatus.COMPLETED, StageStatus.FAILED):
+                stage.ended_at = now
+            StageRepository(session).upsert(stage)
+            session.commit()
+        log.info("refresh_ended", run_id=str(run_id), status=run_status.value)
+        return run_status
 
     async def recover(self, *, stale_after: timedelta) -> list[RunOutcome]:
         """The startup recovery scan (plan.md §10): continue every run a dead process left

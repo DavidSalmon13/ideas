@@ -42,7 +42,8 @@ def test_the_happy_path_follows_the_funnel() -> None:
         RunStatus.COMPLETED,
     ]
     assert RunStatus.AWAITING_CHECKPOINT not in walk(AUTONOMOUS)
-    assert len(FUNNEL) == len(StageName)
+    # Every stage is on the funnel except REFRESH, a standalone non-funnel op (specs.md §2.11).
+    assert {stage for _, stage in FUNNEL} == set(StageName) - {StageName.REFRESH}
 
 
 def test_every_step_of_the_happy_path_is_allowed() -> None:

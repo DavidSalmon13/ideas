@@ -99,6 +99,16 @@ class StageServices:
             max_cost_usd=1.5, max_llm_calls=3, max_searches=0, max_fetches=0
         )
     )
+    # Refresh (specs.md §2.11): re-verify an opportunity's stale claims — one search + one
+    # medium call per claim, capped so the operation stays cheap and bounded.
+    refresh_budget: ResearchBudget = field(
+        default_factory=lambda: ResearchBudget(
+            max_cost_usd=4.0, max_llm_calls=20, max_searches=20, max_fetches=0
+        )
+    )
+    # A refresh run's budget ceiling, and how old a claim must be to be re-verified.
+    refresh_ceiling_usd: float = 4.0
+    claim_staleness_days: float = 90.0
     # What each stage must have left in the run budget before it may start (plan.md §22).
     stage_minimums_usd: Mapping[StageName, float] = field(
         default_factory=lambda: dict(DEFAULT_STAGE_MINIMUMS_USD)

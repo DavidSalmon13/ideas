@@ -11,6 +11,8 @@ from opp.api.dtos import (
     OpportunitySummary,
     PatchOpportunityRequest,
     PromoteRequest,
+    RefreshRequest,
+    RefreshResponse,
     ReportResponse,
     RunDetail,
 )
@@ -28,7 +30,7 @@ from opp.domain.base import utcnow
 from opp.domain.enums import OpportunityStatus, Verdict
 from opp.domain.opportunity import Opportunity
 from opp.orchestration.budget import BudgetPreflightError
-from opp.orchestration.orchestrator import PromoteError
+from opp.orchestration.orchestrator import PromoteError, RefreshError
 from opp.reporting.final import render_report
 from opp.reporting.partial import render_brief
 
@@ -105,6 +107,35 @@ async def promote_opportunity(
         detail = load_run(session, run.id)
         assert detail is not None
         return run_detail(session, detail, running=True)
+
+
+@router.post("/{opportunity_id}/refresh")
+async def refresh_opportunity(
+    opportunity_id: UUID,
+    body: RefreshRequest,
+    engine: EngineDep,
+) -> RefreshResponse:
+    """Re-verify the opportunity's stale claims against fresh evidence (specs.md §2.11).
+    Runs synchronously — a refresh is short and bounded — and returns what changed."""
+    with engine.sessions() as session:
+        _require(session, opportunity_id)
+    try:
+        outcome = await engine.orchestrator.refresh(
+            opportunity_id,
+            budget_ceiling_usd=body.budget_ceiling_usd,
+            max_age_days=body.max_age_days,
+        )
+    except RefreshError as exc:
+        raise Problem(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return RefreshResponse(
+        opportunity_id=outcome.opportunity_id,
+        run_id=outcome.run_id,
+        stale_claims=outcome.stale_claims,
+        refreshed=outcome.refreshed,
+        status=outcome.status,
+        cost_usd=outcome.cost_usd,
+        detail=outcome.detail,
+    )
 
 
 @router.patch("/{opportunity_id}")
