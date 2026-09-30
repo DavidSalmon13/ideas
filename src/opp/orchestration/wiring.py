@@ -29,6 +29,9 @@ def build_stage_services(
         search=search,
         sink=sink,
         search_cost_estimate_usd=settings.search_cost_per_call_usd,
+        preference_learning=settings.preference_learning,
+        preference_note_limit=settings.preference_note_limit,
+        exploration_fraction=settings.exploration_fraction,
         discovery_budget=ResearchBudget(
             max_cost_usd=settings.discovery_max_cost_usd,
             max_searches=settings.discovery_max_searches,

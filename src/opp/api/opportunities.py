@@ -27,7 +27,7 @@ from opp.db.repositories import (
     SourceRepository,
 )
 from opp.domain.base import utcnow
-from opp.domain.enums import OpportunityStatus, Verdict
+from opp.domain.enums import OpportunityStatus, PreferenceOrigin, Verdict
 from opp.domain.opportunity import Opportunity
 from opp.orchestration.budget import BudgetPreflightError
 from opp.orchestration.orchestrator import PromoteError, RefreshError
@@ -144,14 +144,26 @@ def patch_opportunity(
     body: PatchOpportunityRequest,
     engine: EngineDep,
 ) -> Opportunity:
-    """Set an opportunity's status (pursue / park / discard, specs.md §2.9, §2.12)."""
+    """Set an opportunity's status (pursue / park / discard, specs.md §2.9, §2.12). A
+    discard/park reason is recorded as a learned preference (intent.md §19.2)."""
     with engine.sessions() as session:
         opp = _require(session, opportunity_id)
         opp.status = body.status
         opp.updated_at = utcnow()
         OpportunityRepository(session).upsert(opp)
         session.commit()
+    origin = _PREFERENCE_ORIGIN.get(body.status)
+    if origin is not None:
+        engine.orchestrator.record_preference(
+            body.reason, origin, run_id=opp.run_id, opportunity_id=opp.id
+        )
     return opp
+
+
+_PREFERENCE_ORIGIN = {
+    OpportunityStatus.DISCARDED: PreferenceOrigin.DISCARD,
+    OpportunityStatus.PARKED: PreferenceOrigin.PARK,
+}
 
 
 def _require(session: Session, opportunity_id: UUID) -> Opportunity:

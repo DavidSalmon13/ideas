@@ -190,10 +190,19 @@ class TriageAgent(Agent):
     prompt_version: ClassVar[str] = f"triage/{PROMPT_VERSION}"
     tools: ClassVar[frozenset[CallKind]] = frozenset({CallKind.LLM})
 
-    def __init__(self, leads: Mapping[UUID, Lead], sources: Mapping[UUID, Source]) -> None:
-        """``leads``: the run's leads (any status); ``sources``: the sources they cite."""
+    def __init__(
+        self,
+        leads: Mapping[UUID, Lead],
+        sources: Mapping[UUID, Source],
+        *,
+        learned_preferences: str = "",
+    ) -> None:
+        """``leads``: the run's leads (any status); ``sources``: the sources they cite.
+        ``learned_preferences``: the operator profile as soft steering for the cheap scores
+        only — it never fails a lead (intent.md §19.2)."""
         self._leads = dict(leads)
         self._sources = dict(sources)
+        self._learned = learned_preferences.strip()
         self._prompts = load_prompts("triage", PROMPT_VERSION)
 
     def plan(self, ctx: AgentContext) -> list[str]:
@@ -278,6 +287,7 @@ class TriageAgent(Agent):
             system=self._prompts.system,
             prompt=self._prompts.render_task(
                 scope=describe_scope(ctx.run_config),
+                preferences=self._learned or "none",
                 memory=ctx.memory.render() or "(no earlier work in this run)",
                 leads="\n\n".join(blocks),
                 evidence=untrusted_block(evidence) if evidence else "(none)",

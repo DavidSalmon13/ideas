@@ -191,6 +191,21 @@ class RunMode(StrEnum):
     CONSTRAINED = "constrained"
 
 
+class PreferenceOrigin(StrEnum):
+    """What operator action produced a learned preference signal (intent.md §19.2)."""
+
+    CHECKPOINT_VETO = "checkpoint_veto"
+    CHECKPOINT_PICK = "checkpoint_pick"
+    DISCARD = "discard"
+    PARK = "park"
+
+
+class PreferenceSentiment(StrEnum):
+    LIKE = "like"
+    DISLIKE = "dislike"
+    NEUTRAL = "neutral"
+
+
 class CheckpointMode(StrEnum):
     MANDATORY = "mandatory"
     AUTONOMOUS = "autonomous"

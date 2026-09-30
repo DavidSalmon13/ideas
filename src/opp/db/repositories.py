@@ -30,6 +30,7 @@ from opp.domain.evaluation import Evaluation
 from opp.domain.evidence import Claim, Source
 from opp.domain.lead import Kill, Lead
 from opp.domain.opportunity import Experiment, Opportunity
+from opp.domain.preference import PreferenceSignal
 from opp.domain.report import Report, Trace
 from opp.domain.run import AgentRun, ResearchRun, Stage
 from opp.evidence.dedup import url_hash as url_hash  # re-exported for existing callers
@@ -379,6 +380,31 @@ class ExperimentRepository(ReadRepository[Experiment, models.ExperimentRow]):
             .where(models.ExperimentRow.opportunity_id == opportunity_id)
             .order_by(models.ExperimentRow.priority)
         )
+
+
+class PreferenceRepository(DocRepository[PreferenceSignal, models.PreferenceRow]):
+    _row_type = models.PreferenceRow
+    _domain_type = PreferenceSignal
+
+    def _row(self, obj: PreferenceSignal) -> models.PreferenceRow:
+        return models.PreferenceRow(
+            id=obj.id,
+            origin=obj.origin.value,
+            sentiment=obj.sentiment.value,
+            run_id=obj.run_id,
+            opportunity_id=obj.opportunity_id,
+            created_at=obj.created_at,
+            data=obj.model_dump(mode="json"),
+        )
+
+    def list_recent(self, limit: int = 20) -> list[PreferenceSignal]:
+        """The most recent learned signals, newest first, capped at ``limit``."""
+        stmt = (
+            select(models.PreferenceRow)
+            .order_by(models.PreferenceRow.created_at.desc())
+            .limit(max(limit, 0))
+        )
+        return self._all(stmt)
 
 
 class ReportRepository(DocRepository[Report, models.ReportRow]):

@@ -646,7 +646,7 @@ This is the earliest point the product demonstrates its core value: a grounded, 
 - [x] V1: promote (shortlist runner-up → new deep run)
 - [x] V1: refresh (re-verify stale claims)
 - [x] V1: compare (side-by-side API + UI)
-- [ ] V1: preference learning + exploration allowance
+- [x] V1: preference learning + exploration allowance
 - [ ] V1: second-profile UI
 - [ ] V1: optional auth
 ```

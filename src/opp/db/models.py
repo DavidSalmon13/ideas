@@ -238,6 +238,19 @@ class DedupIndexRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime)
 
 
+class PreferenceRow(DocRow):
+    """A learned operator-preference signal (intent.md §19.2). ``data`` is the
+    PreferenceSignal JSON; the columns exist to list recent signals cheaply."""
+
+    __tablename__ = "preferences"
+
+    origin: Mapped[str] = mapped_column(String)
+    sentiment: Mapped[str] = mapped_column(String)
+    run_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    opportunity_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+
 class SearchCacheRow(DocRow):
     """A cached search response (plan.md §17). ``data`` is the SearchResponse JSON."""
 

@@ -324,3 +324,5 @@ class RefreshResponse(BaseModel):
 
 class PatchOpportunityRequest(BaseModel):
     status: OpportunityStatus
+    # An optional one-line reason; a discard/park reason feeds preference learning (§2.12).
+    reason: str | None = None

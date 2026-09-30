@@ -103,6 +103,13 @@ class Settings(BaseSettings):
     # have lost its process and is continued by `opp recover`.
     recovery_stale_after_minutes: float = Field(default=15.0, ge=0)
 
+    # Preference learning (intent.md §19.2, plan.md §30 feature flag): learn from checkpoint
+    # vetoes/re-picks and discards as soft steering for later runs. `exploration_fraction` is
+    # the share of each run's discovery that deliberately ignores the learned profile.
+    preference_learning: bool = True
+    preference_note_limit: int = Field(default=20, ge=0)
+    exploration_fraction: float = Field(default=0.2, ge=0, le=1)
+
 
 @lru_cache
 def get_settings() -> Settings:

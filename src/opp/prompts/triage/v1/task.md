@@ -1,5 +1,9 @@
 Scope of this run: $scope
 
+Learned operator preferences (soft steering — use only to nuance the specificity and
+small-team-fit scores; NEVER fail a lead for not matching them):
+$preferences
+
 $memory
 
 Leads to screen:

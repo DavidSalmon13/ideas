@@ -60,9 +60,18 @@ class DiscoveryAgent(Agent):
     prompt_version: ClassVar[str] = f"discovery/{PROMPT_VERSION}"
     tools: ClassVar[frozenset[CallKind]] = frozenset({CallKind.LLM, CallKind.SEARCH})
 
-    def __init__(self, signal_source: SignalSource, *, target_leads: int) -> None:
+    def __init__(
+        self,
+        signal_source: SignalSource,
+        *,
+        target_leads: int,
+        learned_preferences: str = "",
+    ) -> None:
+        """``learned_preferences``: the cross-run operator profile as soft steering, or ""
+        for an exploration agent that deliberately ignores it (intent.md §19.2)."""
         self.signal_source = signal_source
         self.target_leads = target_leads
+        self._learned = learned_preferences.strip()
         self._recipe = load_asset("discovery", PROMPT_VERSION, "recipes.json")[signal_source.value]
         self._prompts = load_prompts("discovery", PROMPT_VERSION)
 
@@ -80,6 +89,15 @@ class DiscoveryAgent(Agent):
 
     def plan(self, ctx: AgentContext) -> list[str]:
         return [f"query-{i}" for i in range(len(self._recipe["queries"]))]
+
+    def _preferences(self, run_config: RunConfig) -> str:
+        """The run's own soft preferences plus the learned profile (empty when exploring)."""
+        parts = []
+        if run_config.soft_preferences:
+            parts.append("; ".join(run_config.soft_preferences))
+        if self._learned:
+            parts.append(self._learned)
+        return "\n".join(parts) or "none"
 
     async def run_subtask(self, task: str, ctx: AgentContext) -> SubTaskResult:
         found = ctx.output_counts.get("leads", 0)
@@ -100,7 +118,7 @@ class DiscoveryAgent(Agent):
                 signal_name=self._recipe["name"],
                 evidence_pattern=self._recipe["evidence_pattern"],
                 scope=describe_scope(ctx.run_config),
-                preferences="; ".join(ctx.run_config.soft_preferences) or "none",
+                preferences=self._preferences(ctx.run_config),
                 memory=ctx.memory.render() or "(no earlier work in this run)",
                 query=query,
                 snippets=untrusted_block(

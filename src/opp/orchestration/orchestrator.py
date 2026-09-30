@@ -37,6 +37,7 @@ from opp.agents.refresh import RefreshAgent
 from opp.db.repositories import (
     AgentRunRepository,
     OpportunityRepository,
+    PreferenceRepository,
     ReportRepository,
     RunRepository,
     SourceRepository,
@@ -50,6 +51,7 @@ from opp.domain.enums import (
     CheckpointMode,
     ModelTier,
     OpportunityStatus,
+    PreferenceOrigin,
     RunStatus,
     StageName,
     StageStatus,
@@ -63,6 +65,7 @@ from opp.domain.opportunity import (
     Research,
     SmallTeamFeasibility,
 )
+from opp.domain.preference import PreferenceSignal
 from opp.domain.run import (
     AgentRun,
     CheckpointDecision,
@@ -327,6 +330,9 @@ class Orchestrator:
         run partial. Approve and pick continue the run into deep research."""
         decision, shortlist = self._resolve_checkpoint(run_id, action, opportunity_id, reason)
         if decision.action is CheckpointAction.VETO:
+            self.record_preference(
+                decision.reason, PreferenceOrigin.CHECKPOINT_VETO, run_id=run_id
+            )
             self._transition(
                 run_id,
                 RunStatus.COMPLETED_PARTIAL,
@@ -334,6 +340,13 @@ class Orchestrator:
                 checkpoint=decision,
             )
             return self._outcome(run_id)
+        if decision.action is CheckpointAction.PICK:
+            self.record_preference(
+                decision.reason,
+                PreferenceOrigin.CHECKPOINT_PICK,
+                run_id=run_id,
+                opportunity_id=decision.opportunity_id,
+            )
         title = next(o.title for o in shortlist if o.id == decision.opportunity_id)
         verb = "approved" if decision.action is CheckpointAction.APPROVE else "picked"
         why = f" ({decision.reason})" if decision.reason else ""
@@ -536,6 +549,29 @@ class Orchestrator:
             session.commit()
         log.info("refresh_ended", run_id=str(run_id), status=run_status.value)
         return run_status
+
+    def record_preference(
+        self,
+        reason: str | None,
+        origin: PreferenceOrigin,
+        *,
+        run_id: UUID | None = None,
+        opportunity_id: UUID | None = None,
+    ) -> PreferenceSignal | None:
+        """Store one learned steer from an operator decision (intent.md §19.2): a checkpoint
+        veto/re-pick or a discard/park, each with its one-line reason. A no-op when learning
+        is off or no reason was given; discovery and triage read the accumulated profile as
+        soft steering on later runs."""
+        if not self._services.preference_learning or not reason or not reason.strip():
+            return None
+        signal = PreferenceSignal.of(
+            reason, origin, run_id=run_id, opportunity_id=opportunity_id
+        )
+        with self._sessions() as session:
+            PreferenceRepository(session).add(signal)
+            session.commit()
+        log.info("preference_recorded", origin=origin.value, sentiment=signal.sentiment.value)
+        return signal
 
     async def recover(self, *, stale_after: timedelta) -> list[RunOutcome]:
         """The startup recovery scan (plan.md §10): continue every run a dead process left

@@ -32,6 +32,7 @@ from opp.db.repositories import (
     ClaimRepository,
     LeadRepository,
     OpportunityRepository,
+    PreferenceRepository,
     SourceRepository,
 )
 from opp.domain.enums import (
@@ -45,6 +46,7 @@ from opp.domain.enums import (
 from opp.domain.evidence import Claim, Source
 from opp.domain.lead import Lead
 from opp.domain.opportunity import Opportunity
+from opp.domain.preference import render_preferences
 from opp.domain.run import AgentRun, ResearchRun, Stage
 from opp.evidence.store import EvidenceStore
 from opp.llm.gateway import LLMGateway
@@ -109,6 +111,12 @@ class StageServices:
     # A refresh run's budget ceiling, and how old a claim must be to be re-verified.
     refresh_ceiling_usd: float = 4.0
     claim_staleness_days: float = 90.0
+    # Preference learning (intent.md §19.2): read/write the learned profile as soft steering,
+    # how many recent signals to feed a prompt, and the share of discovery that deliberately
+    # ignores the learned profile (the exploration allowance).
+    preference_learning: bool = True
+    preference_note_limit: int = 20
+    exploration_fraction: float = 0.2
     # What each stage must have left in the run budget before it may start (plan.md §22).
     stage_minimums_usd: Mapping[StageName, float] = field(
         default_factory=lambda: dict(DEFAULT_STAGE_MINIMUMS_USD)
@@ -169,11 +177,19 @@ class DiscoveryStage:
         agent_runs = self._agent_runs(ctx)
         sources = [discovery_signal(agent_run) for agent_run in agent_runs]
         target = DiscoveryAgent.per_source_target(ctx.run.run_config, len(sources))
+        learned = self._learned_preferences()
+        exploring = self._exploration_sources(sources, learned)
         runtime = self._services.runtime()
         results = await asyncio.gather(
             *(
                 runtime.run(
-                    DiscoveryAgent(source, target_leads=target),
+                    DiscoveryAgent(
+                        source,
+                        target_leads=target,
+                        # Exploration agents deliberately ignore the learned profile so the
+                        # operator's stated taste can't hide everything (intent.md §19.2).
+                        learned_preferences="" if source in exploring else learned,
+                    ),
                     agent_run.id,
                     budget=self._services.discovery_budget,
                     run_budget=ctx.run_budget,
@@ -183,6 +199,21 @@ class DiscoveryStage:
             )
         )
         return outcome_of(list(results))
+
+    def _learned_preferences(self) -> str:
+        return load_learned_preferences(self._services)
+
+    def _exploration_sources(
+        self, sources: list[SignalSource], learned: str
+    ) -> frozenset[SignalSource]:
+        """Which signal sources ignore the learned profile this run (deterministic). None
+        when there is nothing learned to ignore or only one source (which then uses it)."""
+        n = len(sources)
+        if not learned or n < 2:
+            return frozenset()
+        count = min(max(round(n * self._services.exploration_fraction), 1), n - 1)
+        ordered = sorted(sources, key=lambda s: s.value)
+        return frozenset(ordered[n - count :])
 
     def _agent_runs(self, ctx: StageContext) -> list[AgentRun]:
         """The stage's agent runs: the existing ones on resume, else one per source."""
@@ -219,8 +250,9 @@ class TriageStage:
         self._dedup(ctx)
         leads, sources = _leads_and_sources(self._services.sessions, ctx.run.id)
         [agent_run] = _agent_runs(self._services.sessions, ctx.stage, [TriageAgent.name])
+        learned = load_learned_preferences(self._services)
         result = await self._services.runtime().run(
-            TriageAgent(leads, sources),
+            TriageAgent(leads, sources, learned_preferences=learned),
             agent_run.id,
             budget=self._services.triage_budget,
             run_budget=ctx.run_budget,
@@ -562,6 +594,16 @@ def _agent_runs(
 
 def discovery_signal(agent_run: AgentRun) -> SignalSource:
     return SignalSource(agent_run.agent_name.removeprefix(f"{DiscoveryAgent.name}:"))
+
+
+def load_learned_preferences(services: StageServices) -> str:
+    """The cross-run operator profile as a steering block, or "" when learning is off or
+    nothing has been learned yet (intent.md §19.2). Read by discovery and triage."""
+    if not services.preference_learning:
+        return ""
+    with services.sessions() as session:
+        signals = PreferenceRepository(session).list_recent(services.preference_note_limit)
+    return render_preferences(signals)
 
 
 def outcome_of(results: list[AgentResult]) -> StageOutcome:
