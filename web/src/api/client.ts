@@ -76,6 +76,7 @@ export const api = {
   listRuns: () => request<RunSummary[]>('GET', '/runs'),
   getRun: (id: string) => request<RunDetail>('GET', `/runs/${id}`),
   createRun: (body: CreateRunRequest) => request<RunDetail>('POST', '/runs', body),
+  deleteRun: (id: string) => request<void>('DELETE', `/runs/${id}`),
   cancelRun: (id: string) => request<RunDetail>('POST', `/runs/${id}/cancel`),
   resumeRun: (id: string, budget?: number) =>
     request<RunDetail>('POST', `/runs/${id}/resume`, { budget_ceiling_usd: budget ?? null }),

@@ -113,6 +113,18 @@ th {
   color: var(--muted);
   font-weight: 600;
 }
+.sort-btn {
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  padding: 0;
+  cursor: pointer;
+}
+.sort-btn:hover {
+  color: var(--fg);
+}
 
 .chip {
   display: inline-block;

@@ -68,13 +68,20 @@ class BusinessShape(StrEnum):
 
 
 class SignalSource(StrEnum):
-    """Discovery strategies (specs.md §4.2)."""
+    """Discovery strategies (specs.md §4.2). The first five mine B2B/SMB automation pain;
+    the rest mine consumer-app opportunities (gaming, social, LLM-native products) that a
+    solo builder would ship as their own product rather than sell to other businesses."""
 
     UNMET_NEED = "unmet_need"
     INCUMBENT_WEAKNESS = "incumbent_weakness"
     REGULATORY_TECH_CHANGE = "regulatory_tech_change"
     MANUAL_PROCESS = "manual_process"
     MARKET_INEFFICIENCY = "market_inefficiency"
+    COMMUNITY_OBSESSION = "community_obsession"
+    APP_STORE_GAP = "app_store_gap"
+    LLM_CAPABILITY_UNLOCK = "llm_capability_unlock"
+    CREATOR_TOOLING_GAP = "creator_tooling_gap"
+    VIRAL_MECHANIC_MINING = "viral_mechanic_mining"
 
 
 class LeadStatus(StrEnum):

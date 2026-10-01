@@ -76,6 +76,12 @@ class DocRepository[TDomain: BaseModel, TRow: DocRow](ReadRepository[TDomain, TR
         self._session.merge(self._row(obj))
         return obj
 
+    def delete(self, id_: UUID) -> None:
+        """Delete the row. Children with an ``ondelete="CASCADE"`` foreign key back to it
+        (plan.md §5) are removed by the database itself — SQLite enforces this per
+        connection (``opp.db.session``), so a plain statement delete is enough."""
+        self._session.execute(delete(self._row_type).where(self._row_type.id == id_))
+
 
 class RunRepository(DocRepository[ResearchRun, models.RunRow]):
     _row_type = models.RunRow

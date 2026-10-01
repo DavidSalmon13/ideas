@@ -156,18 +156,18 @@ def test_exploration_allowance_splits_sources_deterministically(
     sessions: sessionmaker[Session],
 ) -> None:
     stage = _stage(sessions, fraction=0.2)
-    five = list(SignalSource)
-    assert len(five) == 5
+    sources = list(SignalSource)
+    assert len(sources) == 10
 
-    # With a learned profile, ~20% of five sources (1) explore; the rest keep the profile.
-    exploring = stage._exploration_sources(five, learned="avoid manual sales")
-    assert len(exploring) == 1
+    # With a learned profile, ~20% of ten sources (2) explore; the rest keep the profile.
+    exploring = stage._exploration_sources(sources, learned="avoid manual sales")
+    assert len(exploring) == 2
 
     # No learned profile → nothing to ignore, so no exploration.
-    assert stage._exploration_sources(five, learned="") == frozenset()
+    assert stage._exploration_sources(sources, learned="") == frozenset()
 
     # A single source always uses the profile (never leaves the run with zero steering).
-    assert stage._exploration_sources(five[:1], learned="avoid manual sales") == frozenset()
+    assert stage._exploration_sources(sources[:1], learned="avoid manual sales") == frozenset()
 
 
 def test_exploration_never_swallows_the_whole_run(sessions: sessionmaker[Session]) -> None:

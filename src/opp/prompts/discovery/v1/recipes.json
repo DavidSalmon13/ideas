@@ -63,5 +63,70 @@
       "$subject buyers can't find sellers marketplace gap",
       "$subject fragmented market no aggregator"
     ]
+  },
+  "community_obsession": {
+    "name": "Community-obsession mining",
+    "evidence_pattern": "a subreddit, Discord server or fan community repeatedly asking for a feature, bot or companion app that doesn't exist yet",
+    "freshness": "year",
+    "queries": [
+      "$subject subreddit \"someone should make\" OR \"why isn't there\"",
+      "$subject discord server bot feature request",
+      "$subject fandom wiki missing tool community asks for",
+      "$subject \"I wish this app had\" reddit",
+      "$subject community complains no official app",
+      "$subject niche hobby underserved online community"
+    ]
+  },
+  "app_store_gap": {
+    "name": "App-store gap mining",
+    "evidence_pattern": "App Store or Play Store reviews of a popular app complaining about a missing feature, bad UX, or naming a specific alternative they wish existed",
+    "freshness": "year",
+    "queries": [
+      "$subject app reviews \"wish it had\" OR \"missing feature\"",
+      "$subject app \"best alternative to\" reddit",
+      "$subject app store one star review feature request",
+      "$subject game \"needs an update\" players asking for",
+      "$subject app complaints too expensive in-app purchases",
+      "$subject app store reviews bug unfixed for years"
+    ]
+  },
+  "llm_capability_unlock": {
+    "name": "LLM-capability-unlock mining",
+    "evidence_pattern": "a recent model, API or AI feature release that makes a consumer product newly possible or dramatically cheaper to build, described in launch posts, changelogs or developer discussion",
+    "freshness": "month",
+    "queries": [
+      "$subject new AI model release changes what's possible",
+      "$subject LLM API new capability announcement",
+      "\"now possible with AI\" $subject consumer app",
+      "$subject AI feature launch hacker news discussion",
+      "$subject multimodal voice AI new app idea",
+      "$subject AI wrapper app opportunity reddit"
+    ]
+  },
+  "creator_tooling_gap": {
+    "name": "Creator-tooling gap mining",
+    "evidence_pattern": "streamers, YouTubers, indie game developers or other online creators describing a workflow pain, manual task or missing tool in their content pipeline",
+    "freshness": "year",
+    "queries": [
+      "$subject streamer \"is there a tool\" workflow",
+      "$subject youtuber manually edits because no tool exists",
+      "$subject indie game dev marketing pain forum",
+      "$subject content creator \"takes forever\" editing process",
+      "$subject twitch streamer tool wishlist",
+      "$subject creator economy complaint no good tool"
+    ]
+  },
+  "viral_mechanic_mining": {
+    "name": "Viral/growth-mechanic mining",
+    "evidence_pattern": "post-mortems, growth breakdowns or retrospectives explaining what made a social or gaming app spread quickly, in a niche that hasn't seen the same mechanic yet",
+    "freshness": "year",
+    "queries": [
+      "$subject app growth breakdown what made it viral",
+      "$subject game mechanic \"blew up\" post mortem",
+      "$subject social app growth hack case study",
+      "why did $subject app go viral analysis",
+      "$subject indie game marketing success story reddit",
+      "$subject app \"grew to\" users organic no niche equivalent"
+    ]
   }
 }

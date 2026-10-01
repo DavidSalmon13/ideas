@@ -98,7 +98,7 @@ def test_profiles_and_config_describe_the_new_run_form(harness: Harness) -> None
 
     config = client.get("/config").json()
     assert config["default_profile"] == "bootstrap"
-    assert len(config["signal_sources"]) == 5
+    assert len(config["signal_sources"]) == 10
     assert len(config["dimensions"]) == 16
     assert config["stage_minimums_usd"]["deep_research"] > 0
 
@@ -255,6 +255,24 @@ def test_patch_opportunity_sets_status(harness: Harness) -> None:
     assert patched.status_code == 200
     assert patched.json()["status"] == "discarded"
     assert client.get(f"/opportunities/{opp_id}").json()["status"] == "discarded"
+
+
+def test_delete_run_cascades_to_its_opportunities(harness: Harness) -> None:
+    outcome = harness.seed_completed_run()
+    client = TestClient(harness.app)
+    assert client.get("/opportunities").json()  # the run left opportunities behind
+
+    deleted = client.delete(f"/runs/{outcome.run_id}")  # type: ignore[attr-defined]
+    assert deleted.status_code == 204
+
+    assert client.get(f"/runs/{outcome.run_id}").status_code == 404  # type: ignore[attr-defined]
+    assert client.get(f"/runs/{outcome.run_id}/leads").status_code == 404  # type: ignore[attr-defined]
+    assert client.get("/opportunities").json() == []
+
+
+def test_delete_unknown_run_is_a_404(harness: Harness) -> None:
+    client = TestClient(harness.app)
+    assert client.delete(f"/runs/{uuid4()}").status_code == 404
 
 
 def test_unknown_ids_return_problem_json(harness: Harness) -> None:

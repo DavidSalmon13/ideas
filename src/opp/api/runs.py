@@ -74,6 +74,19 @@ def run_events(run_id: UUID, engine: EngineDep) -> StreamingResponse:
     )
 
 
+@router.delete("/{run_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_run(run_id: UUID, engine: EngineDep) -> None:
+    """Delete a run and everything under it (leads, opportunities, reports, ...). Refused
+    while the run is in flight — cancel it first."""
+    with engine.sessions() as session:
+        _require(session, run_id)
+    if engine.run_manager.is_running(run_id):
+        raise Problem(status.HTTP_409_CONFLICT, f"run {run_id} is running — cancel it first")
+    with engine.sessions() as session:
+        RunRepository(session).delete(run_id)
+        session.commit()
+
+
 @router.post("/{run_id}/cancel")
 def cancel_run(run_id: UUID, engine: EngineDep) -> RunDetail:
     with engine.sessions() as session:

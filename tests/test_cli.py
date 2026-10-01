@@ -163,10 +163,12 @@ def test_cli_calibrate_projects_the_cost_without_a_db_or_keys(
     assert main(["calibrate"]) == 0
     out = capsys.readouterr().out
     assert "Cost calibration" in out
-    assert "$19.00 of the $20.00 ceiling (within)" in out
-    # A tighter ceiling is flagged as over.
-    assert main(["calibrate", "--budget", "12"]) == 0
-    assert "(OVER)" in capsys.readouterr().out
+    # Ten signal sources (five B2B + five consumer-app) now push the default worst case
+    # over $20; the runtime budget guard still halts before an actual overspend.
+    assert "$22.75 of the $20.00 ceiling (OVER)" in out
+    # A looser ceiling is flagged as within.
+    assert main(["calibrate", "--budget", "25"]) == 0
+    assert "(within)" in capsys.readouterr().out
 
 
 def test_cli_needs_search_configured_without_a_cassette(

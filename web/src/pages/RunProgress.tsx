@@ -43,8 +43,23 @@ export function RunProgress() {
     }
   }, [id])
 
+  const [cancelling, setCancelling] = useState(false)
+  const [cancelError, setCancelError] = useState<string | null>(null)
+
   const status = event?.status ?? detail?.status
+  const isTerminal = event?.is_terminal ?? detail?.is_terminal ?? false
   const reachedIndex = status ? STAGES.indexOf(status) : -1
+
+  async function cancel() {
+    setCancelling(true)
+    setCancelError(null)
+    try {
+      await api.cancelRun(id)
+    } catch (err) {
+      setCancelError(err instanceof Error ? err.message : String(err))
+      setCancelling(false)
+    }
+  }
 
   return (
     <div className="stack">
@@ -60,10 +75,18 @@ export function RunProgress() {
 
       {(event || detail) && (
         <Section title="Status">
-          <p>
-            <Chip text={status ?? 'unknown'} />{' '}
-            {event?.running ? <span className="muted">running…</span> : null}
+          <p className="row-between">
+            <span>
+              <Chip text={status ?? 'unknown'} />{' '}
+              {event?.running ? <span className="muted">running…</span> : null}
+            </span>
+            {!isTerminal && (
+              <button className="btn" onClick={cancel} disabled={cancelling}>
+                {cancelling ? 'Cancelling…' : 'Cancel run'}
+              </button>
+            )}
           </p>
+          {cancelError && <ErrorBox message={cancelError} />}
           {detail && (
             <p>
               Profile: <strong>{detail.profile_ref}</strong>
